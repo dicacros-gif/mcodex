@@ -413,6 +413,19 @@ def delete_unreferenced_assets(removed: list[dict[str, Any]], kept: list[dict[st
     return deleted
 
 
+def delete_created_assets(paths: set[Path]) -> int:
+    deleted = 0
+    for path in sorted(paths):
+        try:
+            path.relative_to(DOCS_DIR.resolve())
+        except ValueError:
+            continue
+        if path.is_file():
+            path.unlink()
+            deleted += 1
+    return deleted
+
+
 def extension_from(url: str, content_type: str | None, media_type: str) -> str:
     path = unquote(urlparse(url).path).lower()
     for ext in (".mp4", ".webm", ".mov", ".jpg", ".jpeg", ".png", ".webp", ".gif"):
@@ -1011,11 +1024,6 @@ def main() -> int:
     archive = load_archive()
     removed_duplicates = dedupe_archive_items(archive)
     deleted_duplicate_assets = 0
-    if removed_duplicates and not args.dry_run:
-        deleted_duplicate_assets = delete_unreferenced_assets(
-            removed_duplicates,
-            archive.get("items", []),
-        )
     existing_items = [item for item in archive.get("items", []) if item.get("id")]
     existing_by_id = {item.get("id"): item for item in existing_items}
     existing_ids = set(existing_by_id)
@@ -1024,6 +1032,13 @@ def main() -> int:
     download_items: list[dict[str, Any]] = []
     extracted_total = 0
     crawl_errors: list[str] = []
+    blocked_error: str | None = None
+    preexisting_asset_paths = {
+        path.resolve()
+        for path in MEDIA_ROOT.rglob("*")
+        if path.is_file()
+    }
+    created_asset_paths: set[Path] = set()
 
     storage_state = prepare_storage_state()
     cookies = parse_cookie_secret(env_first("MJ_COOKIES", "MIDJOURNEY_COOKIES"))
@@ -1046,6 +1061,14 @@ def main() -> int:
         if cookies:
             context.add_cookies(cookies)
 
+    def save_tracked_asset(context: Any, item: dict[str, Any]) -> str | None:
+        asset_path = save_asset(context, item, max_bytes)
+        if asset_path:
+            absolute_path = DOCS_DIR.joinpath(*asset_path.split("/")).resolve()
+            if absolute_path not in preexisting_asset_paths:
+                created_asset_paths.add(absolute_path)
+        return asset_path
+
     if args.backfill_assets_only:
         missing = [
             item
@@ -1054,6 +1077,10 @@ def main() -> int:
         ]
         if not missing:
             if removed_duplicates and not args.dry_run:
+                deleted_duplicate_assets = delete_unreferenced_assets(
+                    removed_duplicates,
+                    archive.get("items", []),
+                )
                 archive["updated_at"] = args.captured_at
                 update_counts(archive)
                 write_archive(archive)
@@ -1077,7 +1104,7 @@ def main() -> int:
             backfilled_assets = 0
             try:
                 for item in missing:
-                    item["asset_path"] = save_asset(context, item, max_bytes)
+                    item["asset_path"] = save_tracked_asset(context, item)
                     if item.get("asset_path"):
                         backfilled_assets += 1
             finally:
@@ -1111,6 +1138,11 @@ def main() -> int:
                 context = new_context()
                 try:
                     candidates = crawl_tab(context, tab, args)
+                except CrawlBlocked as exc:
+                    blocked_error = f"{tab['key']}: {exc}"
+                    print(f"blocked: {blocked_error}", file=sys.stderr)
+                    context.close()
+                    break
                 except Exception as exc:
                     message = f"{tab['key']}: {exc}"
                     crawl_errors.append(message)
@@ -1139,12 +1171,26 @@ def main() -> int:
                     for item in tab_download_items:
                         if item.get("asset_path"):
                             continue
-                        item["asset_path"] = save_asset(context, item, max_bytes)
+                        item["asset_path"] = save_tracked_asset(context, item)
                         if item.get("asset_path") and item not in new_items:
                             backfilled_assets += 1
                 context.close()
         finally:
             browser.close()
+
+    if blocked_error:
+        deleted_created_assets = delete_created_assets(created_asset_paths)
+        print(f"crawl blocked: {blocked_error}", file=sys.stderr)
+        print(
+            "Existing archive data and committed media were left unchanged.",
+            file=sys.stderr,
+        )
+        if deleted_created_assets:
+            print(
+                f"deleted newly downloaded assets from blocked run: {deleted_created_assets}",
+                file=sys.stderr,
+            )
+        return 1
 
     if extracted_total == 0:
         for error in crawl_errors:
@@ -1155,6 +1201,12 @@ def main() -> int:
     if not new_items and backfilled_assets == 0 and not removed_duplicates:
         print("No new Midjourney items found. Existing archive is unchanged.")
         return 0
+
+    if removed_duplicates and not args.dry_run:
+        deleted_duplicate_assets = delete_unreferenced_assets(
+            removed_duplicates,
+            archive.get("items", []),
+        )
 
     print(f"new items: {len(new_items)}")
     if backfilled_assets:

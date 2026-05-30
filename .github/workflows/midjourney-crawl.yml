@@ -15,10 +15,19 @@ concurrency:
 
 jobs:
   crawl:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, midjourney-crawler]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Verify approved runner
+        run: |
+          echo "Runner name: ${RUNNER_NAME}"
+          echo "Runner environment: ${RUNNER_ENVIRONMENT}"
+          if [[ "${RUNNER_ENVIRONMENT}" == "github-hosted" ]]; then
+            echo "This workflow must run on an approved self-hosted runner."
+            exit 1
+          fi
 
       - name: Set up Python
         uses: actions/setup-python@v5
