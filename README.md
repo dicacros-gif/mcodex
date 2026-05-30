@@ -27,6 +27,8 @@ Midjourney는 Cloudflare 또는 로그인 챌린지를 반환할 수 있습니�
 
 공개 페이지라도 자동화 환경의 IP나 브라우저 상태에 따라 차단될 수 있습니다. 크롤러는 차단 페이지를 감지하면 데이터를 덮어쓰지 않고 실패하도록 만들어져 있습니다.
 
+스타일 탭은 Midjourney의 `/api/explore-srefs` endpoint를 사용합니다. 현재 비로그인 자동화 세션에서는 이 endpoint가 403을 반환할 수 있으므로, 스타일 수집까지 안정적으로 하려면 위 쿠키 또는 storage state secret을 설정하세요.
+
 ## Optional variables
 
 저장소 **Variables**에서 조정할 수 있습니다.

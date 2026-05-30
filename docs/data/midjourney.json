@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-05-30T12:07:24Z",
+  "updated_at": "2026-05-30T12:25:00Z",
   "source_tabs": [
     {
       "key": "images",
@@ -20,11 +20,147 @@
   ],
   "counts": {
     "images": 12,
-    "videos": 6,
+    "videos": 14,
     "styles": 0,
-    "total": 18
+    "total": 26
   },
   "items": [
+    {
+      "id": "videos-6eae4935-15c6-4be7-9553-63d893d36854-ff3317fa",
+      "tab": "videos",
+      "tab_label": "Videos",
+      "media_type": "image",
+      "page_url": "https://www.midjourney.com/jobs/6eae4935-15c6-4be7-9553-63d893d36854",
+      "media_url": "https://cdn.midjourney.com/6eae4935-15c6-4be7-9553-63d893d36854/0_0_384_N.webp",
+      "thumbnail_url": "https://cdn.midjourney.com/6eae4935-15c6-4be7-9553-63d893d36854/0_0_384_N.webp",
+      "asset_path": "media/videos/videos-6eae4935-15c6-4be7-9553-63d893d36854-ff3317fa.webp",
+      "prompt": "hand drawn illustration of a skeleton on a bike with strong wind, graphic Mediterranean, Mediterranean aesthetic, thin outline, blue and red tones, minimal shading, clipart, joan of arc",
+      "title": "startloaded",
+      "style_code": null,
+      "width": 2016,
+      "height": 2416,
+      "captured_at": "2026-05-30T12:25:00Z",
+      "source_tab_url": "https://www.midjourney.com/explore?tab=videos"
+    },
+    {
+      "id": "videos-fc3ea136-be8a-4b24-afb6-58820dd23850-f372b47d",
+      "tab": "videos",
+      "tab_label": "Videos",
+      "media_type": "image",
+      "page_url": "https://www.midjourney.com/jobs/fc3ea136-be8a-4b24-afb6-58820dd23850",
+      "media_url": "https://cdn.midjourney.com/fc3ea136-be8a-4b24-afb6-58820dd23850/0_0_384_N.webp",
+      "thumbnail_url": "https://cdn.midjourney.com/fc3ea136-be8a-4b24-afb6-58820dd23850/0_0_384_N.webp",
+      "asset_path": "media/videos/videos-fc3ea136-be8a-4b24-afb6-58820dd23850-f372b47d.webp",
+      "prompt": "in a european techno night club, a girl dancing, people in the background - raw",
+      "title": "kapnobatai333",
+      "style_code": null,
+      "width": 816,
+      "height": 1456,
+      "captured_at": "2026-05-30T12:25:00Z",
+      "source_tab_url": "https://www.midjourney.com/explore?tab=videos"
+    },
+    {
+      "id": "videos-aeff2ede-5681-4832-a2d5-738ff6ed2c25-e8f0063a",
+      "tab": "videos",
+      "tab_label": "Videos",
+      "media_type": "image",
+      "page_url": "https://www.midjourney.com/jobs/aeff2ede-5681-4832-a2d5-738ff6ed2c25",
+      "media_url": "https://cdn.midjourney.com/aeff2ede-5681-4832-a2d5-738ff6ed2c25/0_1_384_N.webp",
+      "thumbnail_url": "https://cdn.midjourney.com/aeff2ede-5681-4832-a2d5-738ff6ed2c25/0_1_384_N.webp",
+      "asset_path": "media/videos/videos-aeff2ede-5681-4832-a2d5-738ff6ed2c25-e8f0063a.webp",
+      "prompt": "A cute, clever mouse sitting in front of a mousetrap, happily eating a piece of cheese",
+      "title": "karlheinz5511",
+      "style_code": null,
+      "width": 1024,
+      "height": 1024,
+      "captured_at": "2026-05-30T12:25:00Z",
+      "source_tab_url": "https://www.midjourney.com/explore?tab=videos"
+    },
+    {
+      "id": "videos-1ee5371d-542f-41c7-a1cf-8aebcf9788e8-cace5dd6",
+      "tab": "videos",
+      "tab_label": "Videos",
+      "media_type": "image",
+      "page_url": "https://www.midjourney.com/jobs/1ee5371d-542f-41c7-a1cf-8aebcf9788e8",
+      "media_url": "https://cdn.midjourney.com/1ee5371d-542f-41c7-a1cf-8aebcf9788e8/0_2_384_N.webp",
+      "thumbnail_url": "https://cdn.midjourney.com/1ee5371d-542f-41c7-a1cf-8aebcf9788e8/0_2_384_N.webp",
+      "asset_path": "media/videos/videos-1ee5371d-542f-41c7-a1cf-8aebcf9788e8-cace5dd6.webp",
+      "prompt": "ghost of tsushima",
+      "title": "shaaapt",
+      "style_code": null,
+      "width": 1648,
+      "height": 2944,
+      "captured_at": "2026-05-30T12:25:00Z",
+      "source_tab_url": "https://www.midjourney.com/explore?tab=videos"
+    },
+    {
+      "id": "videos-7fcd8802-af8f-4827-8aeb-624f151e665c-cb98230b",
+      "tab": "videos",
+      "tab_label": "Videos",
+      "media_type": "image",
+      "page_url": "https://www.midjourney.com/jobs/7fcd8802-af8f-4827-8aeb-624f151e665c",
+      "media_url": "https://cdn.midjourney.com/7fcd8802-af8f-4827-8aeb-624f151e665c/0_0_384_N.webp",
+      "thumbnail_url": "https://cdn.midjourney.com/7fcd8802-af8f-4827-8aeb-624f151e665c/0_0_384_N.webp",
+      "asset_path": "media/videos/videos-7fcd8802-af8f-4827-8aeb-624f151e665c-cb98230b.webp",
+      "prompt": "A cute vibrant whimsical Siberian Husky illustration with soft black fur with white paws tones, joyful expression with blue eyes open and smiling, standing in a playful happy pose. , tiny floating hearts, and delicate surrounding the bear. Hand-lettered brush script text reading \"Happy Friday\". Clean white background with soft watercolor textures, elegant and cheerful mood, High-detail digital watercolor illustration, soft shadows, polished adult-friendly cute aesthetic.",
+      "title": "kdg13",
+      "style_code": null,
+      "width": 1024,
+      "height": 1024,
+      "captured_at": "2026-05-30T12:25:00Z",
+      "source_tab_url": "https://www.midjourney.com/explore?tab=videos"
+    },
+    {
+      "id": "videos-72d8a1e1-0fec-4783-9718-4e877ec2274b-536d3a17",
+      "tab": "videos",
+      "tab_label": "Videos",
+      "media_type": "image",
+      "page_url": "https://www.midjourney.com/jobs/72d8a1e1-0fec-4783-9718-4e877ec2274b",
+      "media_url": "https://cdn.midjourney.com/72d8a1e1-0fec-4783-9718-4e877ec2274b/0_0_384_N.webp",
+      "thumbnail_url": "https://cdn.midjourney.com/72d8a1e1-0fec-4783-9718-4e877ec2274b/0_0_384_N.webp",
+      "asset_path": "media/videos/videos-72d8a1e1-0fec-4783-9718-4e877ec2274b-536d3a17.webp",
+      "prompt": "A joyful high-fashion editorial photograph of a woman walking through a surreal garden filled with oversized flowers, floating ribbons, sunlight beams, and butterflies, elegant styling, soft colours, magical realism, cinematic photography",
+      "title": "bernard116",
+      "style_code": null,
+      "width": 1792,
+      "height": 2688,
+      "captured_at": "2026-05-30T12:25:00Z",
+      "source_tab_url": "https://www.midjourney.com/explore?tab=videos"
+    },
+    {
+      "id": "videos-71b8d455-9f37-4309-87a3-96a3e8201046-8ce9ee8f",
+      "tab": "videos",
+      "tab_label": "Videos",
+      "media_type": "image",
+      "page_url": "https://www.midjourney.com/jobs/71b8d455-9f37-4309-87a3-96a3e8201046",
+      "media_url": "https://cdn.midjourney.com/71b8d455-9f37-4309-87a3-96a3e8201046/0_0_384_N.webp",
+      "thumbnail_url": "https://cdn.midjourney.com/71b8d455-9f37-4309-87a3-96a3e8201046/0_0_384_N.webp",
+      "asset_path": "media/videos/videos-71b8d455-9f37-4309-87a3-96a3e8201046-8ce9ee8f.webp",
+      "prompt": "a blank sepia page of a ledger from early 1800s, faint horizontal ledger lines, small corner accent, simple line border, frontier Gothic, decay, linocut aesthetic,",
+      "title": "ln_petrichor",
+      "style_code": null,
+      "width": 896,
+      "height": 1344,
+      "captured_at": "2026-05-30T12:25:00Z",
+      "source_tab_url": "https://www.midjourney.com/explore?tab=videos"
+    },
+    {
+      "id": "videos-412a6a90-601d-426c-b064-502e72c8f2f7-b06d6467",
+      "tab": "videos",
+      "tab_label": "Videos",
+      "media_type": "image",
+      "page_url": "https://www.midjourney.com/jobs/412a6a90-601d-426c-b064-502e72c8f2f7",
+      "media_url": "https://cdn.midjourney.com/412a6a90-601d-426c-b064-502e72c8f2f7/0_0_384_N.webp",
+      "thumbnail_url": "https://cdn.midjourney.com/412a6a90-601d-426c-b064-502e72c8f2f7/0_0_384_N.webp",
+      "asset_path": "media/videos/videos-412a6a90-601d-426c-b064-502e72c8f2f7-b06d6467.webp",
+      "prompt": "A real photo taken with a mobile phone, bright scene, high angle medium shot of a large orca breaching from deep teal ocean water. The killer whale is captured mid-leap, positioned diagonally across the frame, showcasing its sleek black and white skin with reflective wet surfaces. Massive white water splashes and crystalline droplets erupt around the whale's body as it emerges. The water is a rich, dark turquoise color with gentle surface ripples and bright sunlight glinting off the foam. The focus is sharp on the whale's textures and the individual splashes of water. The composition emphasizes the power and grace of the animal in its natural habitat. No text, high detail.",
+      "title": "u7141612681",
+      "style_code": null,
+      "width": 816,
+      "height": 1456,
+      "captured_at": "2026-05-30T12:25:00Z",
+      "source_tab_url": "https://www.midjourney.com/explore?tab=videos"
+    },
     {
       "id": "videos-67181b76-2a78-436d-9984-0706315dc19b-268175b3",
       "tab": "videos",
@@ -332,5 +468,7 @@
       "source_tab_url": "https://www.midjourney.com/explore?tab=top"
     }
   ],
-  "crawl_errors": []
+  "crawl_errors": [
+    "styles: Midjourney returned a Cloudflare or login challenge. Add MIDJOURNEY_COOKIES or MIDJOURNEY_STORAGE_STATE_JSON as a GitHub secret and rerun."
+  ]
 }

@@ -614,6 +614,53 @@ def api_items_from_payload(tab: dict[str, str], payload: Any) -> list[dict[str, 
     return items
 
 
+def style_items_from_payload(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, dict):
+        styles = payload.get("items") or payload.get("styles") or payload.get("data") or []
+    else:
+        styles = payload
+    if not isinstance(styles, list):
+        return []
+
+    items: list[dict[str, Any]] = []
+    for style in styles:
+        if not isinstance(style, dict):
+            continue
+        style_id = style.get("id") or style.get("style_id")
+        formatted_sref = style.get("formatted_sref") or style.get("formattedSref") or style.get("sref")
+        if not style_id and formatted_sref:
+            style_id = formatted_sref if str(formatted_sref).startswith("0_") else f"0_{formatted_sref}"
+        if not style_id:
+            continue
+
+        clean_sref = str(formatted_sref or style_id).replace("0_", "", 1)
+        title = f"Style {clean_sref}"
+        media_url = style.get("image_url") or style.get("imageUrl")
+        if not media_url:
+            media_url = f"https://cdn.midjourney.com/styles/{style_id}/portrait_384_N.webp"
+
+        preview_job_ids = style.get("previewJobIds") or style.get("preview_job_ids")
+        if isinstance(preview_job_ids, list) and preview_job_ids:
+            page_url = f"https://www.midjourney.com/jobs/{preview_job_ids[0]}"
+        else:
+            page_url = f"https://www.midjourney.com/explore?tab=styles_random"
+
+        items.append(
+            {
+                "mediaType": "image",
+                "mediaUrl": media_url,
+                "thumbnailUrl": media_url,
+                "pageUrl": page_url,
+                "prompt": title,
+                "title": title,
+                "styleCode": clean_sref,
+                "width": 896,
+                "height": 1344,
+            }
+        )
+    return items
+
+
 def save_asset(context: Any, item: dict[str, Any], max_bytes: int) -> str | None:
     if item.get("tab") == "videos":
         url = item.get("thumbnail_url") or item.get("media_url")
@@ -701,13 +748,22 @@ def save_asset(context: Any, item: dict[str, Any], max_bytes: int) -> str | None
 
 def crawl_tab(context: Any, tab: dict[str, str], args: argparse.Namespace) -> list[dict[str, Any]]:
     page = context.new_page()
-    api_payloads: list[Any] = []
+    explore_payloads: list[Any] = []
+    style_payloads: list[Any] = []
 
     def capture_api_response(response: Any) -> None:
-        if "/api/explore" not in response.url or response.status != 200:
+        if response.status != 200:
+            return
+        is_style_feed = "/api/explore-srefs" in response.url
+        is_explore_feed = "/api/explore" in response.url and not is_style_feed
+        if not is_style_feed and not is_explore_feed:
             return
         try:
-            api_payloads.append(response.json())
+            payload = response.json()
+            if is_style_feed:
+                style_payloads.append(payload)
+            else:
+                explore_payloads.append(payload)
         except Exception as exc:
             print(f"warning: could not parse {response.url}: {exc}", file=sys.stderr)
 
@@ -727,16 +783,45 @@ def crawl_tab(context: Any, tab: dict[str, str], args: argparse.Namespace) -> li
             page.wait_for_timeout(args.scroll_wait_ms)
             detect_blocked(page)
 
-        raw_items: list[dict[str, Any]] = []
-        for payload in api_payloads:
-            raw_items.extend(api_items_from_payload(tab, payload))
-
-        raw_items.extend(
-            page.evaluate(
-                EXTRACT_SCRIPT,
-                {"expectedType": tab["media_type"], "limit": args.max_per_tab * 4},
+        if tab["key"] == "styles" and not style_payloads:
+            fetched_style_payloads = page.evaluate(
+                r"""
+                async () => {
+                  const payloads = [];
+                  for (const feed of ["random", "hot", "top"]) {
+                    const url = new URL("/api/explore-srefs", location.origin);
+                    url.searchParams.set("feed", feed);
+                    url.searchParams.set("page", "0");
+                    const response = await fetch(url.href, {
+                      credentials: "include",
+                      headers: { "X-CSRF-Protection": "1" }
+                    });
+                    if (response.ok) {
+                      payloads.push(await response.json());
+                    }
+                  }
+                  return payloads;
+                }
+                """
             )
-        )
+            if fetched_style_payloads:
+                style_payloads.extend(fetched_style_payloads)
+
+        raw_items: list[dict[str, Any]] = []
+        if tab["key"] == "styles":
+            for payload in style_payloads:
+                raw_items.extend(style_items_from_payload(payload))
+        else:
+            for payload in explore_payloads:
+                raw_items.extend(api_items_from_payload(tab, payload))
+
+        if tab["key"] != "styles":
+            raw_items.extend(
+                page.evaluate(
+                    EXTRACT_SCRIPT,
+                    {"expectedType": tab["media_type"], "limit": args.max_per_tab * 4},
+                )
+            )
         normalized = []
         seen = set()
         for raw in raw_items:
