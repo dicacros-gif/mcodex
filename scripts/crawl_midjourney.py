@@ -27,14 +27,14 @@ SOURCE_TABS = [
     },
     {
         "key": "videos",
-        "label": "Videos",
-        "url": "https://www.midjourney.com/explore?tab=videos",
+        "label": "Videos Top",
+        "url": "https://www.midjourney.com/explore?tab=video_top",
         "media_type": "video",
     },
     {
         "key": "styles",
-        "label": "Styles",
-        "url": "https://www.midjourney.com/explore?tab=styles_random",
+        "label": "Styles Top",
+        "url": "https://www.midjourney.com/explore?tab=styles_top",
         "media_type": "style",
     },
 ]
@@ -563,15 +563,18 @@ def api_items_from_payload(tab: dict[str, str], payload: Any) -> list[dict[str, 
         if not visible_indexes:
             visible_indexes = [0]
         generated_image = f"https://cdn.midjourney.com/{job_id}/0_{visible_indexes[0]}_384_N.webp"
+        generated_video_thumbnail = f"https://cdn.midjourney.com/video/{job_id}/0_640_N.webp"
+        generated_video_url = f"https://cdn.midjourney.com/video/{job_id}/0.mp4"
         thumbnail_url = image_urls[0] if image_urls else generated_image
 
         if tab["key"] == "videos":
+            thumbnail_url = image_urls[0] if image_urls else generated_video_thumbnail
             items.append(
                 {
                     "mediaType": "image",
                     "mediaUrl": thumbnail_url,
                     "thumbnailUrl": thumbnail_url,
-                    "videoUrl": video_urls[0] if video_urls else None,
+                    "videoUrl": video_urls[0] if video_urls else generated_video_url,
                     "pageUrl": page_url,
                     "prompt": text,
                     "title": title,
@@ -811,6 +814,9 @@ def crawl_tab(context: Any, tab: dict[str, str], args: argparse.Namespace) -> li
         if tab["key"] == "styles":
             for payload in style_payloads:
                 raw_items.extend(style_items_from_payload(payload))
+            if not raw_items:
+                for payload in explore_payloads:
+                    raw_items.extend(api_items_from_payload(tab, payload))
         else:
             for payload in explore_payloads:
                 raw_items.extend(api_items_from_payload(tab, payload))
@@ -963,51 +969,59 @@ def main() -> int:
             headless=not args.headed,
             args=["--disable-dev-shm-usage", "--no-sandbox"],
         )
-        context_kwargs = {
-            "viewport": {"width": 1440, "height": 1200},
-            "user_agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/126.0.0.0 Safari/537.36"
-            ),
-            "locale": "en-US",
-        }
-        if storage_state:
-            context_kwargs["storage_state"] = str(storage_state)
-        context = browser.new_context(**context_kwargs)
-        if cookies:
-            context.add_cookies(cookies)
 
+        def new_context() -> Any:
+            context_kwargs = {
+                "viewport": {"width": 1440, "height": 1200},
+                "user_agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/126.0.0.0 Safari/537.36"
+                ),
+                "locale": "en-US",
+            }
+            if storage_state:
+                context_kwargs["storage_state"] = str(storage_state)
+            context = browser.new_context(**context_kwargs)
+            if cookies:
+                context.add_cookies(cookies)
+            return context
+
+        backfilled_assets = 0
         try:
             for tab in selected_tabs:
+                context = new_context()
                 try:
                     candidates = crawl_tab(context, tab, args)
                 except Exception as exc:
                     message = f"{tab['key']}: {exc}"
                     crawl_errors.append(message)
                     print(f"warning: {message}", file=sys.stderr)
+                    context.close()
                     continue
                 extracted_total += len(candidates)
+                tab_download_items: list[dict[str, Any]] = []
                 for item in candidates:
                     if item["id"] in existing_ids:
                         existing = existing_by_id.get(item["id"])
                         if existing and not existing.get("asset_path"):
                             download_items.append(existing)
+                            tab_download_items.append(existing)
                         continue
                     new_items.append(item)
                     download_items.append(item)
+                    tab_download_items.append(item)
                     existing_ids.add(item["id"])
 
-            backfilled_assets = 0
-            if download_items and not args.no_download and not args.dry_run:
-                for item in download_items:
-                    if item.get("asset_path"):
-                        continue
-                    item["asset_path"] = save_asset(context, item, max_bytes)
-                    if item.get("asset_path") and item not in new_items:
-                        backfilled_assets += 1
+                if tab_download_items and not args.no_download and not args.dry_run:
+                    for item in tab_download_items:
+                        if item.get("asset_path"):
+                            continue
+                        item["asset_path"] = save_asset(context, item, max_bytes)
+                        if item.get("asset_path") and item not in new_items:
+                            backfilled_assets += 1
+                context.close()
         finally:
-            context.close()
             browser.close()
 
     if extracted_total == 0:
