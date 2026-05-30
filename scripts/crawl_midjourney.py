@@ -44,6 +44,8 @@ UUID_RE = re.compile(
     re.IGNORECASE,
 )
 HEX32_RE = re.compile(r"(?<![0-9a-f])([0-9a-f]{32})(?![0-9a-f])", re.IGNORECASE)
+VIDEO_URL_RE = re.compile(r"\.(?:mp4|webm|mov)(?:\?|#|$)", re.IGNORECASE)
+IMAGE_URL_RE = re.compile(r"\.(?:png|jpe?g|webp|gif)(?:\?|#|$)", re.IGNORECASE)
 
 EXTRACT_SCRIPT = r"""
 ({ expectedType, limit }) => {
@@ -444,8 +446,17 @@ def normalize_item(tab: dict[str, str], raw: dict[str, Any], captured_at: str) -
     media_url = raw.get("mediaUrl") or raw.get("media_url") or raw.get("thumbnailUrl")
     thumbnail_url = raw.get("thumbnailUrl") or raw.get("thumbnail_url") or media_url
     media_type = raw.get("mediaType") or raw.get("media_type") or tab["media_type"]
+    video_url = raw.get("videoUrl") or raw.get("video_url")
     if tab["media_type"] == "style":
         media_type = "image"
+    if tab["key"] == "videos":
+        if media_url and VIDEO_URL_RE.search(media_url):
+            video_url = video_url or media_url
+        media_type = "image"
+        if thumbnail_url and not VIDEO_URL_RE.search(thumbnail_url):
+            media_url = thumbnail_url
+        else:
+            media_url = None
     item = {
         "id": "",
         "tab": tab["key"],
@@ -463,6 +474,8 @@ def normalize_item(tab: dict[str, str], raw: dict[str, Any], captured_at: str) -
         "captured_at": captured_at,
         "source_tab_url": tab["url"],
     }
+    if video_url:
+        item["video_url"] = video_url
     item["id"] = item_id(tab["key"], item)
     return item
 
@@ -538,16 +551,8 @@ def api_items_from_payload(tab: dict[str, str], payload: Any) -> list[dict[str, 
         width = job.get("width") or 0
         height = job.get("height") or 0
         urls = collect_media_urls(job)
-        video_urls = [
-            url
-            for url in urls
-            if re.search(r"\.(?:mp4|webm|mov)(?:\?|#|$)", url, re.IGNORECASE)
-        ]
-        image_urls = [
-            url
-            for url in urls
-            if re.search(r"\.(?:png|jpe?g|webp|gif)(?:\?|#|$)", url, re.IGNORECASE)
-        ]
+        video_urls = [url for url in urls if VIDEO_URL_RE.search(url)]
+        image_urls = [url for url in urls if IMAGE_URL_RE.search(url)]
 
         source_items = job.get("items") if isinstance(job.get("items"), list) else []
         visible_indexes = [
@@ -559,6 +564,22 @@ def api_items_from_payload(tab: dict[str, str], payload: Any) -> list[dict[str, 
             visible_indexes = [0]
         generated_image = f"https://cdn.midjourney.com/{job_id}/0_{visible_indexes[0]}_384_N.webp"
         thumbnail_url = image_urls[0] if image_urls else generated_image
+
+        if tab["key"] == "videos":
+            items.append(
+                {
+                    "mediaType": "image",
+                    "mediaUrl": thumbnail_url,
+                    "thumbnailUrl": thumbnail_url,
+                    "videoUrl": video_urls[0] if video_urls else None,
+                    "pageUrl": page_url,
+                    "prompt": text,
+                    "title": title,
+                    "width": width,
+                    "height": height,
+                }
+            )
+            continue
 
         if video_urls:
             for video_url in video_urls:
@@ -594,7 +615,13 @@ def api_items_from_payload(tab: dict[str, str], payload: Any) -> list[dict[str, 
 
 
 def save_asset(context: Any, item: dict[str, Any], max_bytes: int) -> str | None:
-    url = item.get("media_url") or item.get("thumbnail_url")
+    if item.get("tab") == "videos":
+        url = item.get("thumbnail_url") or item.get("media_url")
+        if url and VIDEO_URL_RE.search(url):
+            print(f"warning: skipping video file for thumbnail-only video tab item {item['id']}", file=sys.stderr)
+            return None
+    else:
+        url = item.get("media_url") or item.get("thumbnail_url")
     if not url:
         return None
 

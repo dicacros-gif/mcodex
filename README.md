@@ -8,6 +8,8 @@ Midjourney Explore의 공개 탭을 매일 크롤링해서 `docs/` 아래에 누
 
 새 항목만 `docs/data/midjourney.json` 맨 위에 추가합니다. 기존 JSON 항목과 `docs/media/`에 받은 이미지/비디오는 삭제하지 않습니다. GitHub Pages를 `docs` 폴더로 켜면 `docs/index.html`에서 최신 항목이 위에 보입니다.
 
+비디오 탭은 영상 파일을 저장하지 않고 썸네일 이미지만 `docs/media/videos/`에 저장합니다. 실제 영상 URL이 발견되어도 GitHub에는 썸네일만 커밋됩니다.
+
 ## Daily automation
 
 `.github/workflows/midjourney-crawl.yml`이 매일 09:00 KST에 실행됩니다. 수동 실행도 가능합니다.
