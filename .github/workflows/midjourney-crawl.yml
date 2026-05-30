@@ -2,6 +2,11 @@ name: Midjourney 12-hour crawl
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/midjourney-crawl.yml"
   schedule:
     # 09:00 and 21:00 Asia/Seoul every day.
     - cron: "0 0,12 * * *"
@@ -15,7 +20,7 @@ concurrency:
 
 jobs:
   crawl:
-    runs-on: [self-hosted, linux, midjourney-crawler]
+    runs-on: [self-hosted, linux]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
