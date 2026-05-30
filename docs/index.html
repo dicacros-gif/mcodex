@@ -42,67 +42,12 @@
         line-height: 1.5;
       }
 
-      header {
-        border-bottom: 1px solid var(--line);
-        padding: 24px clamp(16px, 5vw, 56px) 18px;
-      }
-
-      .topbar {
-        align-items: start;
-        display: flex;
-        gap: 18px;
-        justify-content: space-between;
-      }
-
-      h1 {
-        margin: 0 0 8px;
-        font-size: clamp(28px, 5vw, 54px);
-        line-height: 1;
-        letter-spacing: 0;
-      }
-
-      .meta {
-        color: var(--muted);
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px 16px;
-        font-size: 14px;
-      }
-
-      .toolbar {
-        align-items: center;
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        justify-content: flex-end;
-      }
-
-      .tabs {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        margin-top: 18px;
-      }
-
       button {
         border: 1px solid var(--line);
         background: transparent;
         color: var(--ink);
         cursor: pointer;
         font: inherit;
-      }
-
-      .tabs button,
-      .toolbar button {
-        border-radius: 8px;
-        min-height: 38px;
-        padding: 7px 12px;
-      }
-
-      button[aria-pressed="true"],
-      .toolbar button.active {
-        border-color: var(--accent);
-        background: color-mix(in srgb, var(--accent) 16%, transparent);
       }
 
       main {
@@ -210,41 +155,9 @@
         padding: 12px 14px;
       }
 
-      @media (max-width: 640px) {
-        .topbar {
-          display: block;
-        }
-
-        .toolbar {
-          justify-content: flex-start;
-          margin-top: 16px;
-        }
-      }
     </style>
   </head>
   <body>
-    <header>
-      <div class="topbar">
-        <div>
-          <h1>Midjourney Public Archive</h1>
-          <div class="meta">
-            <span id="updated">No crawl yet</span>
-            <span id="counts">0 items</span>
-            <span id="status"></span>
-          </div>
-        </div>
-        <div class="toolbar" aria-label="Archive actions">
-          <button type="button" id="copyDeletesButton">Copy deletes</button>
-          <button type="button" id="clearDeletesButton">Clear deletes</button>
-        </div>
-      </div>
-      <nav class="tabs" aria-label="Archive filters">
-        <button type="button" data-filter="all" aria-pressed="true">All</button>
-        <button type="button" data-filter="images" aria-pressed="false">Images</button>
-        <button type="button" data-filter="videos" aria-pressed="false">Videos</button>
-        <button type="button" data-filter="styles" aria-pressed="false">Styles</button>
-      </nav>
-    </header>
     <main>
       <section id="archive" class="grid" aria-live="polite"></section>
     </main>
@@ -252,26 +165,15 @@
       const DELETE_QUEUE_KEY = "midjourneyArchivePendingDeletes";
 
       const archive = document.getElementById("archive");
-      const updated = document.getElementById("updated");
-      const counts = document.getElementById("counts");
-      const statusText = document.getElementById("status");
-      const copyDeletesButton = document.getElementById("copyDeletesButton");
-      const clearDeletesButton = document.getElementById("clearDeletesButton");
-      const buttons = [...document.querySelectorAll("[data-filter]")];
 
       let archiveData = null;
       let items = [];
-      let currentFilter = "all";
 
       const escapeText = (value) => String(value ?? "")
         .replaceAll("&", "&amp;")
         .replaceAll("<", "&lt;")
         .replaceAll(">", "&gt;")
         .replaceAll('"', "&quot;");
-
-      function setStatus(message) {
-        statusText.textContent = message || "";
-      }
 
       function pendingDeletes() {
         try {
@@ -288,13 +190,6 @@
 
       function savePendingDeletes(value) {
         localStorage.setItem(DELETE_QUEUE_KEY, JSON.stringify(value));
-        updateDeleteButtons();
-      }
-
-      function updateDeleteButtons() {
-        const total = pendingDeletes().length;
-        copyDeletesButton.textContent = total ? `Copy deletes (${total})` : "Copy deletes";
-        clearDeletesButton.disabled = total === 0;
       }
 
       function mediaHtml(item) {
@@ -306,20 +201,9 @@
         return `<img src="${escapeText(source)}" alt="">`;
       }
 
-      function refreshMeta() {
-        updated.textContent = archiveData?.updated_at
-          ? `Updated ${new Date(archiveData.updated_at).toLocaleString()}`
-          : "No crawl yet";
-        const pending = pendingDeletes().length;
-        counts.textContent = pending ? `${items.length} items · ${pending} pending delete` : `${items.length} items`;
-      }
-
-      function render(filter = currentFilter) {
-        currentFilter = filter;
-        refreshMeta();
+      function render() {
         const deletedIds = pendingDeleteIds();
-        const keptItems = items.filter((item) => !deletedIds.has(item.id));
-        const visible = filter === "all" ? keptItems : keptItems.filter((item) => item.tab === filter);
+        const visible = items.filter((item) => !deletedIds.has(item.id));
         if (!visible.length) {
           archive.className = "empty";
           archive.innerHTML = "저장된 항목이 없습니다. 크롤링이 성공하면 최신 항목이 위에서부터 쌓입니다.";
@@ -347,7 +231,6 @@
         const response = await fetch("./data/midjourney.json", { cache: "no-store" });
         archiveData = await response.json();
         items = archiveData.items || [];
-        updateDeleteButtons();
         render();
       }
 
@@ -364,7 +247,6 @@
           });
           savePendingDeletes(queued);
         }
-        setStatus("Queued for next cleanup");
         render();
       }
 
@@ -374,36 +256,6 @@
         queueDelete(button.dataset.delete);
       });
 
-      buttons.forEach((button) => {
-        button.addEventListener("click", () => {
-          buttons.forEach((candidate) => candidate.setAttribute("aria-pressed", String(candidate === button)));
-          render(button.dataset.filter);
-        });
-      });
-
-      copyDeletesButton.addEventListener("click", async () => {
-        const queued = pendingDeletes();
-        if (!queued.length) {
-          setStatus("No pending deletes");
-          return;
-        }
-        const text = JSON.stringify(queued, null, 2);
-        try {
-          await navigator.clipboard.writeText(text);
-          setStatus("Copied pending deletes");
-        } catch {
-          prompt("삭제 대기 목록", text);
-        }
-      });
-
-      clearDeletesButton.addEventListener("click", () => {
-        if (!pendingDeletes().length) return;
-        savePendingDeletes([]);
-        setStatus("Pending deletes cleared");
-        render();
-      });
-
-      updateDeleteButtons();
       loadArchive().catch((error) => {
         archive.className = "empty";
         archive.innerHTML = escapeText(error.message || "데이터를 불러오지 못했습니다.");
