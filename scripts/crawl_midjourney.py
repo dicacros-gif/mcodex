@@ -239,6 +239,23 @@ def env_int(name: str, default: int) -> int:
         return default
 
 
+def is_server_execution() -> bool:
+    return (
+        os.getenv("GITHUB_ACTIONS", "").strip().lower() == "true"
+        or env_bool("MIDJOURNEY_SERVER_CRAWL", False)
+    )
+
+
+def ensure_server_execution() -> bool:
+    if is_server_execution():
+        return True
+    print(
+        "Local crawling is disabled. This archive crawler runs only on the GitHub Actions server.",
+        file=sys.stderr,
+    )
+    return False
+
+
 def load_archive() -> dict[str, Any]:
     if not DATA_PATH.exists():
         return {
@@ -957,6 +974,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
+    if not ensure_server_execution():
+        return 2
+
     args.captured_at = utc_now()
     selected_tabs = [tab for tab in SOURCE_TABS if not args.tab or tab["key"] in args.tab]
     max_bytes = max(1, args.max_asset_mb) * 1024 * 1024
