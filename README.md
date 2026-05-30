@@ -34,6 +34,12 @@ Midjourney는 Cloudflare 또는 로그인 챌린지를 반환할 수 있습니�
 - `SCROLL_STEPS`: 페이지 스크롤 횟수, 기본값 `4`
 - `DOWNLOAD_MEDIA`: `false`로 두면 파일 다운로드 없이 원본 URL 메타데이터만 저장
 
+## Delete from the homepage
+
+`docs/index.html`의 썸네일 오른쪽 위 `X`를 누르면 해당 항목을 삭제할 수 있습니다. 정적 GitHub Pages에는 서버가 없기 때문에, 처음 삭제할 때 브라우저에서 GitHub fine-grained token을 입력해야 합니다.
+
+토큰 권한은 이 저장소에 대해 **Contents: Read and write**만 주면 됩니다. 삭제가 성공하면 한 커밋 안에서 `docs/data/midjourney.json`의 항목과 `docs/media/`의 파일이 함께 제거됩니다.
+
 ## Local run
 
 ```bash
@@ -43,3 +49,9 @@ python scripts/crawl_midjourney.py
 ```
 
 로컬에서 로그인 상태를 써야 한다면 `MIDJOURNEY_COOKIES` 또는 `MIDJOURNEY_STORAGE_STATE_JSON` 환경 변수를 지정해서 실행합니다.
+
+이미 JSON에는 있지만 `docs/media/` 파일이 비어 있는 항목만 다시 저장하려면:
+
+```bash
+python scripts/crawl_midjourney.py --backfill-assets-only
+```

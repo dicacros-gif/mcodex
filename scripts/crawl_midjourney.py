@@ -467,6 +467,132 @@ def normalize_item(tab: dict[str, str], raw: dict[str, Any], captured_at: str) -
     return item
 
 
+def prompt_text(prompt: Any) -> str:
+    if isinstance(prompt, str):
+        return prompt
+    if not isinstance(prompt, dict):
+        return ""
+    decoded = prompt.get("decodedPrompt")
+    if isinstance(decoded, list):
+        parts = [
+            str(part.get("content", "")).strip()
+            for part in decoded
+            if isinstance(part, dict) and part.get("content")
+        ]
+        if parts:
+            return " ".join(parts)
+    return str(prompt.get("text") or prompt.get("full_command") or "").strip()
+
+
+def collect_media_urls(payload: Any) -> list[str]:
+    found: list[str] = []
+
+    def walk(value: Any) -> None:
+        if isinstance(value, str):
+            if re.search(r"https?://", value) and re.search(
+                r"\.(?:mp4|webm|mov|png|jpe?g|webp|gif)(?:\?|#|$)",
+                value,
+                re.IGNORECASE,
+            ):
+                found.append(html.unescape(value))
+            return
+        if isinstance(value, list):
+            for child in value:
+                walk(child)
+            return
+        if isinstance(value, dict):
+            for child in value.values():
+                walk(child)
+
+    walk(payload)
+    deduped = []
+    seen = set()
+    for url in found:
+        key = canonical_url(url)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(url)
+    return deduped
+
+
+def api_items_from_payload(tab: dict[str, str], payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, dict):
+        jobs = payload.get("items") or payload.get("jobs") or payload.get("data") or []
+    else:
+        jobs = payload
+    if not isinstance(jobs, list):
+        return []
+
+    items: list[dict[str, Any]] = []
+    for job in jobs:
+        if not isinstance(job, dict):
+            continue
+        job_id = job.get("id")
+        if not job_id:
+            continue
+
+        text = prompt_text(job.get("prompt"))
+        title = job.get("display_name") or job.get("username_v2") or job.get("type") or ""
+        page_url = f"https://www.midjourney.com/jobs/{job_id}"
+        width = job.get("width") or 0
+        height = job.get("height") or 0
+        urls = collect_media_urls(job)
+        video_urls = [
+            url
+            for url in urls
+            if re.search(r"\.(?:mp4|webm|mov)(?:\?|#|$)", url, re.IGNORECASE)
+        ]
+        image_urls = [
+            url
+            for url in urls
+            if re.search(r"\.(?:png|jpe?g|webp|gif)(?:\?|#|$)", url, re.IGNORECASE)
+        ]
+
+        source_items = job.get("items") if isinstance(job.get("items"), list) else []
+        visible_indexes = [
+            index
+            for index, source_item in enumerate(source_items)
+            if isinstance(source_item, dict) and not source_item.get("server_filtered")
+        ]
+        if not visible_indexes:
+            visible_indexes = [0]
+        generated_image = f"https://cdn.midjourney.com/{job_id}/0_{visible_indexes[0]}_384_N.webp"
+        thumbnail_url = image_urls[0] if image_urls else generated_image
+
+        if video_urls:
+            for video_url in video_urls:
+                items.append(
+                    {
+                        "mediaType": "video",
+                        "mediaUrl": video_url,
+                        "thumbnailUrl": thumbnail_url,
+                        "pageUrl": page_url,
+                        "prompt": text,
+                        "title": title,
+                        "width": width,
+                        "height": height,
+                    }
+                )
+            continue
+
+        if tab["media_type"] in {"image", "style", "video"}:
+            items.append(
+                {
+                    "mediaType": "image",
+                    "mediaUrl": thumbnail_url,
+                    "thumbnailUrl": thumbnail_url,
+                    "pageUrl": page_url,
+                    "prompt": text,
+                    "title": title,
+                    "styleCode": None,
+                    "width": width,
+                    "height": height,
+                }
+            )
+    return items
+
+
 def save_asset(context: Any, item: dict[str, Any], max_bytes: int) -> str | None:
     url = item.get("media_url") or item.get("thumbnail_url")
     if not url:
@@ -475,6 +601,8 @@ def save_asset(context: Any, item: dict[str, Any], max_bytes: int) -> str | None
     media_dir = MEDIA_ROOT / item["tab"]
     media_dir.mkdir(parents=True, exist_ok=True)
 
+    response = None
+    body = None
     try:
         response = context.request.get(
             url,
@@ -482,11 +610,49 @@ def save_asset(context: Any, item: dict[str, Any], max_bytes: int) -> str | None
             timeout=60000,
         )
     except Exception as exc:
-        print(f"warning: could not download {url}: {exc}", file=sys.stderr)
-        return None
+        print(f"warning: request download failed for {url}: {exc}", file=sys.stderr)
 
-    if not response.ok:
-        print(f"warning: download failed {response.status} {url}", file=sys.stderr)
+    def read_browser_body(download_context: Any, label: str) -> tuple[Any, bytes | None]:
+        page = download_context.new_page()
+        try:
+            page_response = page.goto(url, wait_until="load", timeout=60000)
+            if page_response is None or not page_response.ok:
+                status = page_response.status if page_response is not None else "no response"
+                print(f"warning: {label} browser download failed {status} {url}", file=sys.stderr)
+                return page_response, None
+            return page_response, page_response.body()
+        except Exception as exc:
+            print(f"warning: {label} browser download failed for {url}: {exc}", file=sys.stderr)
+            return None, None
+        finally:
+            page.close()
+
+    if response is not None and response.ok:
+        body = response.body()
+    else:
+        status = response.status if response is not None else "no response"
+        print(f"warning: request download failed {status} {url}; trying browser fallback", file=sys.stderr)
+        response, body = read_browser_body(context, "current-context")
+
+    if body is None:
+        browser = getattr(context, "browser", None)
+        if browser is not None:
+            isolated = browser.new_context(
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/126.0.0.0 Safari/537.36"
+                ),
+                locale="en-US",
+            )
+            try:
+                response, body = read_browser_body(isolated, "isolated-context")
+            finally:
+                isolated.close()
+
+    if response is None or not response.ok or body is None:
+        status = response.status if response is not None else "no response"
+        print(f"warning: download failed {status} {url}", file=sys.stderr)
         return None
 
     content_length = response.headers.get("content-length")
@@ -494,7 +660,6 @@ def save_asset(context: Any, item: dict[str, Any], max_bytes: int) -> str | None
         print(f"warning: skipping oversized asset {url}", file=sys.stderr)
         return None
 
-    body = response.body()
     if len(body) > max_bytes:
         print(f"warning: skipping oversized asset {url}", file=sys.stderr)
         return None
@@ -509,6 +674,17 @@ def save_asset(context: Any, item: dict[str, Any], max_bytes: int) -> str | None
 
 def crawl_tab(context: Any, tab: dict[str, str], args: argparse.Namespace) -> list[dict[str, Any]]:
     page = context.new_page()
+    api_payloads: list[Any] = []
+
+    def capture_api_response(response: Any) -> None:
+        if "/api/explore" not in response.url or response.status != 200:
+            return
+        try:
+            api_payloads.append(response.json())
+        except Exception as exc:
+            print(f"warning: could not parse {response.url}: {exc}", file=sys.stderr)
+
+    page.on("response", capture_api_response)
     try:
         print(f"opening {tab['label']}: {tab['url']}")
         page.goto(tab["url"], wait_until="domcontentloaded", timeout=args.timeout_ms)
@@ -524,9 +700,15 @@ def crawl_tab(context: Any, tab: dict[str, str], args: argparse.Namespace) -> li
             page.wait_for_timeout(args.scroll_wait_ms)
             detect_blocked(page)
 
-        raw_items = page.evaluate(
-            EXTRACT_SCRIPT,
-            {"expectedType": tab["media_type"], "limit": args.max_per_tab * 4},
+        raw_items: list[dict[str, Any]] = []
+        for payload in api_payloads:
+            raw_items.extend(api_items_from_payload(tab, payload))
+
+        raw_items.extend(
+            page.evaluate(
+                EXTRACT_SCRIPT,
+                {"expectedType": tab["media_type"], "limit": args.max_per_tab * 4},
+            )
         )
         normalized = []
         seen = set()
@@ -575,6 +757,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Crawl and report without writing data or media files.",
     )
+    parser.add_argument(
+        "--backfill-assets-only",
+        action="store_true",
+        help="Download missing docs/media assets for items already in the archive.",
+    )
     parser.add_argument("--scroll-steps", type=int, default=env_int("SCROLL_STEPS", 4))
     parser.add_argument("--scroll-pixels", type=int, default=env_int("SCROLL_PIXELS", 2200))
     parser.add_argument("--scroll-wait-ms", type=int, default=env_int("SCROLL_WAIT_MS", 1200))
@@ -605,12 +792,59 @@ def main() -> int:
         return 2
 
     archive = load_archive()
-    existing_ids = {item.get("id") for item in archive.get("items", []) if item.get("id")}
+    existing_items = [item for item in archive.get("items", []) if item.get("id")]
+    existing_by_id = {item.get("id"): item for item in existing_items}
+    existing_ids = set(existing_by_id)
     new_items: list[dict[str, Any]] = []
+    download_items: list[dict[str, Any]] = []
     extracted_total = 0
+    crawl_errors: list[str] = []
 
     storage_state = prepare_storage_state()
     cookies = parse_cookie_secret(os.getenv("MIDJOURNEY_COOKIES", ""))
+
+    if args.backfill_assets_only:
+        missing = [
+            item
+            for item in archive.get("items", [])
+            if item.get("id") and not item.get("asset_path") and item.get("media_url")
+        ]
+        if not missing:
+            print("No missing assets to backfill.")
+            return 0
+        if args.dry_run:
+            print(f"missing assets: {len(missing)}")
+            for item in missing[:10]:
+                print(f"- {item['tab']} {item['id']} {item.get('media_url')}")
+            return 0
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(
+                headless=not args.headed,
+                args=["--disable-dev-shm-usage", "--no-sandbox"],
+            )
+            context = browser.new_context(
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/126.0.0.0 Safari/537.36"
+                ),
+                locale="en-US",
+            )
+            backfilled_assets = 0
+            try:
+                for item in missing:
+                    item["asset_path"] = save_asset(context, item, max_bytes)
+                    if item.get("asset_path"):
+                        backfilled_assets += 1
+            finally:
+                context.close()
+                browser.close()
+        if backfilled_assets and not args.dry_run:
+            archive["updated_at"] = args.captured_at
+            update_counts(archive)
+            write_archive(archive)
+        print(f"backfilled assets: {backfilled_assets}")
+        return 0 if backfilled_assets else 1
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(
@@ -634,30 +868,49 @@ def main() -> int:
 
         try:
             for tab in selected_tabs:
-                candidates = crawl_tab(context, tab, args)
+                try:
+                    candidates = crawl_tab(context, tab, args)
+                except Exception as exc:
+                    message = f"{tab['key']}: {exc}"
+                    crawl_errors.append(message)
+                    print(f"warning: {message}", file=sys.stderr)
+                    continue
                 extracted_total += len(candidates)
                 for item in candidates:
                     if item["id"] in existing_ids:
+                        existing = existing_by_id.get(item["id"])
+                        if existing and not existing.get("asset_path"):
+                            download_items.append(existing)
                         continue
                     new_items.append(item)
+                    download_items.append(item)
                     existing_ids.add(item["id"])
 
-            if new_items and not args.no_download and not args.dry_run:
-                for item in new_items:
+            backfilled_assets = 0
+            if download_items and not args.no_download and not args.dry_run:
+                for item in download_items:
+                    if item.get("asset_path"):
+                        continue
                     item["asset_path"] = save_asset(context, item, max_bytes)
+                    if item.get("asset_path") and item not in new_items:
+                        backfilled_assets += 1
         finally:
             context.close()
             browser.close()
 
     if extracted_total == 0:
+        for error in crawl_errors:
+            print(f"crawl error: {error}", file=sys.stderr)
         print("No items were extracted from any Midjourney tab.", file=sys.stderr)
         return 1
 
-    if not new_items:
+    if not new_items and backfilled_assets == 0:
         print("No new Midjourney items found. Existing archive is unchanged.")
         return 0
 
     print(f"new items: {len(new_items)}")
+    if backfilled_assets:
+        print(f"backfilled assets: {backfilled_assets}")
     if args.dry_run:
         for item in new_items[:10]:
             print(f"- {item['tab']} {item['id']} {item.get('media_url')}")
@@ -669,6 +922,7 @@ def main() -> int:
         {"key": tab["key"], "label": tab["label"], "url": tab["url"]}
         for tab in SOURCE_TABS
     ]
+    archive["crawl_errors"] = crawl_errors
     archive["items"] = new_items + archive.get("items", [])
     update_counts(archive)
     write_archive(archive)
