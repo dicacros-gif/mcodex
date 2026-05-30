@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: midjourney-daily-crawl
+  group: midjourney-12-hour-crawl
   cancel-in-progress: false
 
 jobs:
@@ -33,7 +33,8 @@ jobs:
 
       - name: Crawl Midjourney public tabs
         env:
-          MIDJOURNEY_SERVER_CRAWL: "1"
+          MJ_COOKIES: ${{ secrets.MJ_COOKIES }}
+          MJ_STORAGE_STATE_JSON: ${{ secrets.MJ_STORAGE_STATE_JSON }}
           MIDJOURNEY_COOKIES: ${{ secrets.MIDJOURNEY_COOKIES }}
           MIDJOURNEY_STORAGE_STATE_JSON: ${{ secrets.MIDJOURNEY_STORAGE_STATE_JSON }}
           MAX_PER_TAB: ${{ vars.MAX_PER_TAB }}

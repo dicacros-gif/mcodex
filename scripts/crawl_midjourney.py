@@ -239,11 +239,16 @@ def env_int(name: str, default: int) -> int:
         return default
 
 
+def env_first(*names: str) -> str:
+    for name in names:
+        value = os.getenv(name, "").strip()
+        if value:
+            return value
+    return ""
+
+
 def is_server_execution() -> bool:
-    return (
-        os.getenv("GITHUB_ACTIONS", "").strip().lower() == "true"
-        or env_bool("MIDJOURNEY_SERVER_CRAWL", False)
-    )
+    return os.getenv("GITHUB_ACTIONS", "").strip().lower() == "true"
 
 
 def ensure_server_execution() -> bool:
@@ -438,7 +443,12 @@ def parse_cookie_secret(raw: str) -> list[dict[str, Any]]:
         return []
     if raw.startswith("{") or raw.startswith("["):
         payload = json.loads(raw)
-        cookies = payload.get("cookies", []) if isinstance(payload, dict) else payload
+        if isinstance(payload, dict) and payload.get("name"):
+            cookies = [payload]
+        elif isinstance(payload, dict):
+            cookies = payload.get("cookies", [])
+        else:
+            cookies = payload
         return [normalize_cookie(cookie) for cookie in cookies if cookie.get("name")]
 
     cookies = []
@@ -462,12 +472,20 @@ def parse_cookie_secret(raw: str) -> list[dict[str, Any]]:
 def normalize_cookie(cookie: dict[str, Any]) -> dict[str, Any]:
     allowed = {"name", "value", "domain", "path", "expires", "httpOnly", "secure", "sameSite", "url"}
     normalized = {key: cookie[key] for key in allowed if key in cookie}
+    if "expires" not in normalized and "expirationDate" in cookie:
+        normalized["expires"] = cookie["expirationDate"]
     if "url" not in normalized and "domain" not in normalized:
         normalized["url"] = "https://www.midjourney.com"
     normalized.setdefault("path", "/")
     if "sameSite" in normalized:
         same_site = str(normalized["sameSite"]).lower()
-        normalized["sameSite"] = {"lax": "Lax", "strict": "Strict", "none": "None"}.get(
+        normalized["sameSite"] = {
+            "lax": "Lax",
+            "strict": "Strict",
+            "none": "None",
+            "no_restriction": "None",
+            "unspecified": "Lax",
+        }.get(
             same_site,
             "Lax",
         )
@@ -475,13 +493,13 @@ def normalize_cookie(cookie: dict[str, Any]) -> dict[str, Any]:
 
 
 def prepare_storage_state() -> Path | None:
-    state_json = os.getenv("MIDJOURNEY_STORAGE_STATE_JSON", "").strip()
+    state_json = env_first("MJ_STORAGE_STATE_JSON", "MIDJOURNEY_STORAGE_STATE_JSON")
     if state_json:
         path = ROOT / ".midjourney-storage-state.json"
         path.write_text(state_json, encoding="utf-8")
         return path
 
-    state_path = os.getenv("MIDJOURNEY_STORAGE_STATE", "").strip()
+    state_path = env_first("MJ_STORAGE_STATE", "MIDJOURNEY_STORAGE_STATE")
     if not state_path:
         return None
 
@@ -516,7 +534,7 @@ def detect_blocked(page: Any) -> None:
     if any(marker in combined for marker in markers):
         raise CrawlBlocked(
             "Midjourney returned a Cloudflare or login challenge. "
-            "Add MIDJOURNEY_COOKIES or MIDJOURNEY_STORAGE_STATE_JSON as a GitHub secret and rerun."
+            "Add MJ_COOKIES or MJ_STORAGE_STATE_JSON as a GitHub secret and rerun."
         )
 
 
@@ -1008,7 +1026,25 @@ def main() -> int:
     crawl_errors: list[str] = []
 
     storage_state = prepare_storage_state()
-    cookies = parse_cookie_secret(os.getenv("MIDJOURNEY_COOKIES", ""))
+    cookies = parse_cookie_secret(env_first("MJ_COOKIES", "MIDJOURNEY_COOKIES"))
+
+    def context_kwargs(**overrides: Any) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {
+            "user_agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/126.0.0.0 Safari/537.36"
+            ),
+            "locale": "en-US",
+        }
+        if storage_state:
+            kwargs["storage_state"] = str(storage_state)
+        kwargs.update(overrides)
+        return kwargs
+
+    def apply_cookies(context: Any) -> None:
+        if cookies:
+            context.add_cookies(cookies)
 
     if args.backfill_assets_only:
         missing = [
@@ -1036,14 +1072,8 @@ def main() -> int:
                 headless=not args.headed,
                 args=["--disable-dev-shm-usage", "--no-sandbox"],
             )
-            context = browser.new_context(
-                user_agent=(
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/126.0.0.0 Safari/537.36"
-                ),
-                locale="en-US",
-            )
+            context = browser.new_context(**context_kwargs())
+            apply_cookies(context)
             backfilled_assets = 0
             try:
                 for item in missing:
@@ -1067,20 +1097,12 @@ def main() -> int:
         )
 
         def new_context() -> Any:
-            context_kwargs = {
-                "viewport": {"width": 1440, "height": 1200},
-                "user_agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/126.0.0.0 Safari/537.36"
-                ),
-                "locale": "en-US",
-            }
-            if storage_state:
-                context_kwargs["storage_state"] = str(storage_state)
-            context = browser.new_context(**context_kwargs)
-            if cookies:
-                context.add_cookies(cookies)
+            context = browser.new_context(
+                **context_kwargs(
+                    viewport={"width": 1440, "height": 1200},
+                )
+            )
+            apply_cookies(context)
             return context
 
         backfilled_assets = 0
