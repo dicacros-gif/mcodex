@@ -349,6 +349,48 @@ def content_key(item: dict[str, Any]) -> str:
     return f"source:{source}"
 
 
+def local_asset_path(item: dict[str, Any]) -> Path | None:
+    value = item.get("asset_path")
+    if not value or str(value).startswith(("http://", "https://")):
+        return None
+    path = DOCS_DIR.joinpath(*str(value).split("/")).resolve()
+    try:
+        path.relative_to(DOCS_DIR.resolve())
+    except ValueError:
+        return None
+    return path
+
+
+def dedupe_archive_items(archive: dict[str, Any]) -> list[dict[str, Any]]:
+    kept: list[dict[str, Any]] = []
+    removed: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in archive.get("items", []):
+        if not item.get("id"):
+            kept.append(item)
+            continue
+        key = content_key(item)
+        if key in seen:
+            removed.append(item)
+            continue
+        seen.add(key)
+        kept.append(item)
+    archive["items"] = kept
+    return removed
+
+
+def delete_unreferenced_assets(removed: list[dict[str, Any]], kept: list[dict[str, Any]]) -> int:
+    kept_paths = {path for item in kept if (path := local_asset_path(item))}
+    deleted = 0
+    for item in removed:
+        path = local_asset_path(item)
+        if not path or path in kept_paths or not path.is_file():
+            continue
+        path.unlink()
+        deleted += 1
+    return deleted
+
+
 def extension_from(url: str, content_type: str | None, media_type: str) -> str:
     path = unquote(urlparse(url).path).lower()
     for ext in (".mp4", ".webm", ".mov", ".jpg", ".jpeg", ".png", ".webp", ".gif"):
@@ -929,6 +971,13 @@ def main() -> int:
         return 2
 
     archive = load_archive()
+    removed_duplicates = dedupe_archive_items(archive)
+    deleted_duplicate_assets = 0
+    if removed_duplicates and not args.dry_run:
+        deleted_duplicate_assets = delete_unreferenced_assets(
+            removed_duplicates,
+            archive.get("items", []),
+        )
     existing_items = [item for item in archive.get("items", []) if item.get("id")]
     existing_by_id = {item.get("id"): item for item in existing_items}
     existing_ids = set(existing_by_id)
@@ -948,6 +997,13 @@ def main() -> int:
             if item.get("id") and not item.get("asset_path") and item.get("media_url")
         ]
         if not missing:
+            if removed_duplicates and not args.dry_run:
+                archive["updated_at"] = args.captured_at
+                update_counts(archive)
+                write_archive(archive)
+                print(f"removed duplicate items: {len(removed_duplicates)}")
+                print(f"deleted duplicate assets: {deleted_duplicate_assets}")
+                return 0
             print("No missing assets to backfill.")
             return 0
         if args.dry_run:
@@ -1054,13 +1110,16 @@ def main() -> int:
         print("No items were extracted from any Midjourney tab.", file=sys.stderr)
         return 1
 
-    if not new_items and backfilled_assets == 0:
+    if not new_items and backfilled_assets == 0 and not removed_duplicates:
         print("No new Midjourney items found. Existing archive is unchanged.")
         return 0
 
     print(f"new items: {len(new_items)}")
     if backfilled_assets:
         print(f"backfilled assets: {backfilled_assets}")
+    if removed_duplicates:
+        print(f"removed duplicate items: {len(removed_duplicates)}")
+        print(f"deleted duplicate assets: {deleted_duplicate_assets}")
     if args.dry_run:
         for item in new_items[:10]:
             print(f"- {item['tab']} {item['id']} {item.get('media_url')}")

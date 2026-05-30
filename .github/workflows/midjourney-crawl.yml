@@ -1,10 +1,10 @@
-name: Midjourney daily crawl
+name: Midjourney 12-hour crawl
 
 on:
   workflow_dispatch:
   schedule:
-    # 09:00 Asia/Seoul every day.
-    - cron: "0 0 * * *"
+    # 09:00 and 21:00 Asia/Seoul every day.
+    - cron: "0 0,12 * * *"
 
 permissions:
   contents: write
