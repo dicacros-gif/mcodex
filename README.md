@@ -38,11 +38,21 @@ Midjourney는 Cloudflare 또는 로그인 챌린지를 반환할 수 있습니�
 - `SCROLL_STEPS`: 페이지 스크롤 횟수, 기본값 `4`
 - `DOWNLOAD_MEDIA`: `false`로 두면 파일 다운로드 없이 원본 URL 메타데이터만 저장
 
-## Delete from the homepage
+## Queue deletes from the homepage
 
-`docs/index.html`의 썸네일 오른쪽 위 `X`를 누르면 해당 항목을 삭제할 수 있습니다. 정적 GitHub Pages에는 서버가 없기 때문에, 처음 삭제할 때 브라우저에서 GitHub fine-grained token을 입력해야 합니다.
+`docs/index.html`의 설명란에 있는 `X`를 누르면 해당 항목이 즉시 화면에서 숨겨지고, 브라우저의 삭제 대기 목록에 저장됩니다. GitHub token은 필요하지 않습니다.
 
-토큰 권한은 이 저장소에 대해 **Contents: Read and write**만 주면 됩니다. 삭제가 성공하면 한 커밋 안에서 `docs/data/midjourney.json`의 항목과 `docs/media/`의 파일이 함께 제거됩니다.
+정적 GitHub Pages는 인증 없이 저장소 파일을 직접 수정할 수 없으므로, 실제 GitHub 파일 삭제는 다음 관리 작업에서 반영합니다. 홈페이지의 **Copy deletes** 버튼으로 삭제 대기 목록을 복사한 뒤 아래 스크립트에 넘기면 `docs/data/midjourney.json` 항목과 `docs/media/` 파일이 함께 제거됩니다.
+
+```bash
+python scripts/apply_deletions.py --file pending-deletes.json
+```
+
+아이디를 직접 넘길 수도 있습니다.
+
+```bash
+python scripts/apply_deletions.py --ids images-example-id,videos-example-id
+```
 
 ## Local run
 
