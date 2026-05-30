@@ -13,13 +13,11 @@ on:
       - ".github/workflows/android-apk.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -33,21 +31,43 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK packages
-        run: |
-          yes | sdkmanager --licenses >/dev/null
-          sdkmanager "platforms;android-35" "build-tools;35.0.0"
-
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.10.2"
 
       - name: Build debug APK
-        run: gradle --no-daemon :app:assembleDebug
+        id: build_apk
+        run: |
+          set +e
+          {
+            echo "sdkmanager version:"
+            sdkmanager --version
+            yes | sdkmanager --licenses
+            sdkmanager "platforms;android-35" "build-tools;35.0.0"
+            echo "gradle version:"
+            gradle --version
+            gradle --no-daemon :app:assembleDebug
+          } 2>&1 | tee android-build.log
+          status=${PIPESTATUS[0]}
+          echo "status=${status}" >> "${GITHUB_OUTPUT}"
+          exit 0
 
       - name: Upload APK
+        if: steps.build_apk.outputs.status == '0'
         uses: actions/upload-artifact@v4
         with:
           name: mj-local-archive-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Commit build log on failure
+        if: steps.build_apk.outputs.status != '0'
+        run: |
+          mkdir -p docs/build-logs
+          cp android-build.log docs/build-logs/android-apk-latest.log
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/build-logs/android-apk-latest.log
+          git commit -m "Update Android APK build log" || true
+          git push || true
+          exit 1
