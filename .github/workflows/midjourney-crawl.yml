@@ -1,0 +1,55 @@
+name: Midjourney daily crawl
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 09:00 Asia/Seoul every day.
+    - cron: "0 0 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: midjourney-daily-crawl
+  cancel-in-progress: false
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Crawl Midjourney public tabs
+        env:
+          MIDJOURNEY_COOKIES: ${{ secrets.MIDJOURNEY_COOKIES }}
+          MIDJOURNEY_STORAGE_STATE_JSON: ${{ secrets.MIDJOURNEY_STORAGE_STATE_JSON }}
+          MAX_PER_TAB: ${{ vars.MAX_PER_TAB }}
+          MAX_ASSET_MB: ${{ vars.MAX_ASSET_MB }}
+          SCROLL_STEPS: ${{ vars.SCROLL_STEPS }}
+          DOWNLOAD_MEDIA: ${{ vars.DOWNLOAD_MEDIA }}
+        run: python scripts/crawl_midjourney.py
+
+      - name: Commit archive updates
+        run: |
+          if [[ -z "$(git status --porcelain docs)" ]]; then
+            echo "No archive changes to commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs
+          git commit -m "Update Midjourney public archive"
+          git push

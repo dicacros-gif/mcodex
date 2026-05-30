@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Midjourney Public Archive</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f7f4ee;
+        --ink: #171717;
+        --muted: #66615a;
+        --line: #d8d0c4;
+        --card: #ffffff;
+        --accent: #1e776a;
+        --accent-2: #b7412e;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #151413;
+          --ink: #f4f0e9;
+          --muted: #b9b0a5;
+          --line: #3b352e;
+          --card: #1f1d1a;
+          --accent: #78c6b7;
+          --accent-2: #ef8a73;
+        }
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        line-height: 1.5;
+      }
+
+      header {
+        border-bottom: 1px solid var(--line);
+        padding: 28px clamp(16px, 5vw, 56px) 22px;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: clamp(28px, 5vw, 54px);
+        line-height: 1;
+        letter-spacing: 0;
+      }
+
+      .meta {
+        color: var(--muted);
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px 16px;
+        font-size: 14px;
+      }
+
+      .tabs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 18px;
+      }
+
+      .tabs button {
+        border: 1px solid var(--line);
+        background: transparent;
+        color: var(--ink);
+        border-radius: 8px;
+        cursor: pointer;
+        font: inherit;
+        min-height: 38px;
+        padding: 7px 12px;
+      }
+
+      .tabs button[aria-pressed="true"] {
+        border-color: var(--accent);
+        background: color-mix(in srgb, var(--accent) 16%, transparent);
+      }
+
+      main {
+        padding: 24px clamp(16px, 5vw, 56px) 56px;
+      }
+
+      .grid {
+        display: grid;
+        gap: 16px;
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      }
+
+      article {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        overflow: hidden;
+      }
+
+      .media {
+        align-items: center;
+        background: #0f0f0f;
+        display: flex;
+        justify-content: center;
+        min-height: 180px;
+      }
+
+      img,
+      video {
+        display: block;
+        height: auto;
+        max-width: 100%;
+        width: 100%;
+      }
+
+      .body {
+        padding: 12px;
+      }
+
+      .label {
+        color: var(--accent-2);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0;
+        text-transform: uppercase;
+      }
+
+      .prompt {
+        display: -webkit-box;
+        font-size: 14px;
+        margin: 8px 0 10px;
+        overflow: hidden;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 4;
+      }
+
+      a {
+        color: var(--accent);
+        overflow-wrap: anywhere;
+      }
+
+      .empty {
+        border: 1px dashed var(--line);
+        border-radius: 8px;
+        color: var(--muted);
+        padding: 28px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Midjourney Public Archive</h1>
+      <div class="meta">
+        <span id="updated">No crawl yet</span>
+        <span id="counts">0 items</span>
+      </div>
+      <nav class="tabs" aria-label="Archive filters">
+        <button type="button" data-filter="all" aria-pressed="true">All</button>
+        <button type="button" data-filter="images" aria-pressed="false">Images</button>
+        <button type="button" data-filter="videos" aria-pressed="false">Videos</button>
+        <button type="button" data-filter="styles" aria-pressed="false">Styles</button>
+      </nav>
+    </header>
+    <main>
+      <section id="archive" class="grid" aria-live="polite"></section>
+    </main>
+    <script>
+      const archive = document.getElementById("archive");
+      const updated = document.getElementById("updated");
+      const counts = document.getElementById("counts");
+      const buttons = [...document.querySelectorAll("[data-filter]")];
+      let items = [];
+
+      const escapeText = (value) => String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
+
+      function mediaHtml(item) {
+        const source = item.asset_path || item.media_url || item.thumbnail_url;
+        if (!source) return "";
+        if (item.media_type === "video" && /\.(mp4|webm|mov)(\?|$)/i.test(source)) {
+          return `<video src="${escapeText(source)}" controls preload="metadata"></video>`;
+        }
+        return `<img src="${escapeText(source)}" alt="">`;
+      }
+
+      function render(filter = "all") {
+        const visible = filter === "all" ? items : items.filter((item) => item.tab === filter);
+        if (!visible.length) {
+          archive.className = "empty";
+          archive.innerHTML = "아직 저장된 항목이 없습니다. GitHub Actions가 처음 성공하면 이곳에 최신 항목이 위에서부터 쌓입니다.";
+          return;
+        }
+        archive.className = "grid";
+        archive.innerHTML = visible.map((item) => `
+          <article>
+            <div class="media">${mediaHtml(item)}</div>
+            <div class="body">
+              <div class="label">${escapeText(item.tab)}${item.style_code ? ` · sref ${escapeText(item.style_code)}` : ""}</div>
+              <p class="prompt">${escapeText(item.prompt || item.title || item.id)}</p>
+              <a href="${escapeText(item.page_url || item.media_url || "#")}" target="_blank" rel="noreferrer">Open source</a>
+            </div>
+          </article>
+        `).join("");
+      }
+
+      fetch("./data/midjourney.json", { cache: "no-store" })
+        .then((response) => response.json())
+        .then((data) => {
+          items = data.items || [];
+          updated.textContent = data.updated_at ? `Updated ${new Date(data.updated_at).toLocaleString()}` : "No crawl yet";
+          counts.textContent = `${items.length} items`;
+          render();
+        })
+        .catch(() => render());
+
+      buttons.forEach((button) => {
+        button.addEventListener("click", () => {
+          buttons.forEach((candidate) => candidate.setAttribute("aria-pressed", String(candidate === button)));
+          render(button.dataset.filter);
+        });
+      });
+    </script>
+  </body>
+</html>

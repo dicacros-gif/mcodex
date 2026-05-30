@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "updated_at": null,
+  "source_tabs": [
+    {
+      "key": "images",
+      "label": "Images Top",
+      "url": "https://www.midjourney.com/explore?tab=top"
+    },
+    {
+      "key": "videos",
+      "label": "Videos",
+      "url": "https://www.midjourney.com/explore?tab=videos"
+    },
+    {
+      "key": "styles",
+      "label": "Styles",
+      "url": "https://www.midjourney.com/explore?tab=styles_random"
+    }
+  ],
+  "counts": {
+    "images": 0,
+    "videos": 0,
+    "styles": 0,
+    "total": 0
+  },
+  "items": []
+}
