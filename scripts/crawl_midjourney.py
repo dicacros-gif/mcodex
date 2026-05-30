@@ -330,6 +330,25 @@ def item_id(tab_key: str, item: dict[str, Any]) -> str:
     return f"{tab_key}-{digest[:16]}"
 
 
+def content_key(item: dict[str, Any]) -> str:
+    public_id = public_id_from(
+        item.get("id"),
+        item.get("media_url"),
+        item.get("thumbnail_url"),
+        item.get("page_url"),
+        item.get("asset_path"),
+    )
+    if public_id:
+        return f"uuid:{public_id}"
+    source = (
+        canonical_url(item.get("media_url"))
+        or canonical_url(item.get("thumbnail_url"))
+        or canonical_url(item.get("page_url"))
+        or str(item.get("id") or "")
+    )
+    return f"source:{source}"
+
+
 def extension_from(url: str, content_type: str | None, media_type: str) -> str:
     path = unquote(urlparse(url).path).lower()
     for ext in (".mp4", ".webm", ".mov", ".jpg", ".jpeg", ".png", ".webp", ".gif"):
@@ -913,6 +932,7 @@ def main() -> int:
     existing_items = [item for item in archive.get("items", []) if item.get("id")]
     existing_by_id = {item.get("id"): item for item in existing_items}
     existing_ids = set(existing_by_id)
+    existing_content_keys = {content_key(item) for item in existing_items}
     new_items: list[dict[str, Any]] = []
     download_items: list[dict[str, Any]] = []
     extracted_total = 0
@@ -1002,16 +1022,20 @@ def main() -> int:
                 extracted_total += len(candidates)
                 tab_download_items: list[dict[str, Any]] = []
                 for item in candidates:
+                    item_content_key = content_key(item)
                     if item["id"] in existing_ids:
                         existing = existing_by_id.get(item["id"])
                         if existing and not existing.get("asset_path"):
                             download_items.append(existing)
                             tab_download_items.append(existing)
                         continue
+                    if item_content_key in existing_content_keys:
+                        continue
                     new_items.append(item)
                     download_items.append(item)
                     tab_download_items.append(item)
                     existing_ids.add(item["id"])
+                    existing_content_keys.add(item_content_key)
 
                 if tab_download_items and not args.no_download and not args.dry_run:
                     for item in tab_download_items:
