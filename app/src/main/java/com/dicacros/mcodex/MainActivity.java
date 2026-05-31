@@ -136,21 +136,32 @@ public class MainActivity extends Activity {
     private TextView optionsSummaryText;
     private TextView scrollValueText;
     private TextView maxPerTabValueText;
+    private TextView pageWaitValueText;
+    private TextView scrollPauseValueText;
     private CheckBox autoStartCheck;
+    private CheckBox downloadUrlsCheck;
     private CheckBox captureScreensCheck;
-    private CheckBox stylesCheck;
-    private CheckBox imagesCheck;
-    private CheckBox videosCheck;
+    private CheckBox captureOnLoadCheck;
+    private CheckBox captureEachScrollCheck;
+    private CheckBox stripPageChromeCheck;
+    private CheckBox clearCacheBeforeCrawlCheck;
     private String userAgent;
     private int targetIndex;
     private int scrollStep;
     private int pendingDownloads;
     private int scrollSteps;
     private int maxPerTab;
+    private int pageWaitMs;
+    private int scrollPauseMs;
     private final int[] queuedByTab = new int[KINDS.length];
     private final Button[] kindTabButtons = new Button[KINDS.length];
     private boolean autoStart;
+    private boolean downloadUrls;
     private boolean captureScreens;
+    private boolean captureOnLoad;
+    private boolean captureEachScroll;
+    private boolean stripPageChrome;
+    private boolean clearCacheBeforeCrawl;
     private boolean includeStyles;
     private boolean includeImages;
     private boolean includeVideos;
@@ -320,15 +331,19 @@ public class MainActivity extends Activity {
         panel.addView(checks);
 
         autoStartCheck = optionCheck("Auto crawl on launch", autoStart);
-        captureScreensCheck = optionCheck("Save WebView captures", captureScreens);
-        stylesCheck = optionCheck("Crawl styles", includeStyles);
-        imagesCheck = optionCheck("Crawl images", includeImages);
-        videosCheck = optionCheck("Crawl video thumbnails", includeVideos);
+        downloadUrlsCheck = optionCheck("Method: download image URLs", downloadUrls);
+        captureScreensCheck = optionCheck("Method: save WebView captures", captureScreens);
+        captureOnLoadCheck = optionCheck("Capture after tab loads", captureOnLoad);
+        captureEachScrollCheck = optionCheck("Capture each scroll", captureEachScroll);
+        stripPageChromeCheck = optionCheck("Hide page buttons before capture", stripPageChrome);
+        clearCacheBeforeCrawlCheck = optionCheck("Clear WebView cache before crawl", clearCacheBeforeCrawl);
         checks.addView(autoStartCheck);
+        checks.addView(downloadUrlsCheck);
         checks.addView(captureScreensCheck);
-        checks.addView(stylesCheck);
-        checks.addView(imagesCheck);
-        checks.addView(videosCheck);
+        checks.addView(captureOnLoadCheck);
+        checks.addView(captureEachScrollCheck);
+        checks.addView(stripPageChromeCheck);
+        checks.addView(clearCacheBeforeCrawlCheck);
 
         View.OnClickListener optionChanged = v -> {
             syncOptionsFromUi();
@@ -336,13 +351,17 @@ public class MainActivity extends Activity {
             updateOptionsSummary();
         };
         autoStartCheck.setOnClickListener(optionChanged);
+        downloadUrlsCheck.setOnClickListener(optionChanged);
         captureScreensCheck.setOnClickListener(optionChanged);
-        stylesCheck.setOnClickListener(optionChanged);
-        imagesCheck.setOnClickListener(optionChanged);
-        videosCheck.setOnClickListener(optionChanged);
+        captureOnLoadCheck.setOnClickListener(optionChanged);
+        captureEachScrollCheck.setOnClickListener(optionChanged);
+        stripPageChromeCheck.setOnClickListener(optionChanged);
+        clearCacheBeforeCrawlCheck.setOnClickListener(optionChanged);
 
-        panel.addView(numberOptionRow("Scroll steps", () -> changeScrollSteps(-1), () -> changeScrollSteps(1), true));
-        panel.addView(numberOptionRow("Max new per tab", () -> changeMaxPerTab(-10), () -> changeMaxPerTab(10), false));
+        panel.addView(numberOptionRow("Scroll steps", () -> changeScrollSteps(-1), () -> changeScrollSteps(1), 0));
+        panel.addView(numberOptionRow("Max new per tab", () -> changeMaxPerTab(-10), () -> changeMaxPerTab(10), 1));
+        panel.addView(numberOptionRow("Page wait sec", () -> changePageWait(-500), () -> changePageWait(500), 2));
+        panel.addView(numberOptionRow("Scroll pause sec", () -> changeScrollPause(-250), () -> changeScrollPause(250), 3));
 
         LinearLayout actions = new LinearLayout(this);
         actions.setOrientation(LinearLayout.HORIZONTAL);
@@ -414,7 +433,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    private LinearLayout numberOptionRow(String label, Runnable minus, Runnable plus, boolean scrollRow) {
+    private LinearLayout numberOptionRow(String label, Runnable minus, Runnable plus, int valueKind) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
@@ -440,10 +459,14 @@ public class MainActivity extends Activity {
         plusButton.setOnClickListener(v -> plus.run());
         row.addView(plusButton, new LinearLayout.LayoutParams(dp(42), dp(34)));
 
-        if (scrollRow) {
+        if (valueKind == 0) {
             scrollValueText = valueView;
-        } else {
+        } else if (valueKind == 1) {
             maxPerTabValueText = valueView;
+        } else if (valueKind == 2) {
+            pageWaitValueText = valueView;
+        } else {
+            scrollPauseValueText = valueView;
         }
         updateNumberLabels();
         return row;
@@ -461,12 +484,19 @@ public class MainActivity extends Activity {
 
     private void loadOptions() {
         autoStart = prefs.getBoolean("autoStart", true);
+        downloadUrls = prefs.getBoolean("downloadUrls", true);
         captureScreens = prefs.getBoolean("captureScreens", true);
+        captureOnLoad = prefs.getBoolean("captureOnLoad", true);
+        captureEachScroll = prefs.getBoolean("captureEachScroll", true);
+        stripPageChrome = prefs.getBoolean("stripPageChrome", true);
+        clearCacheBeforeCrawl = prefs.getBoolean("clearCacheBeforeCrawl", false);
         includeStyles = prefs.getBoolean("includeStyles", true);
         includeImages = prefs.getBoolean("includeImages", true);
         includeVideos = prefs.getBoolean("includeVideos", true);
         scrollSteps = clamp(prefs.getInt("scrollSteps", DEFAULT_SCROLL_STEPS), 1, 30);
         maxPerTab = clamp(prefs.getInt("maxPerTab", DEFAULT_MAX_PER_TAB), 10, 300);
+        pageWaitMs = clamp(prefs.getInt("pageWaitMs", 2200), 800, 8000);
+        scrollPauseMs = clamp(prefs.getInt("scrollPauseMs", 1300), 500, 5000);
         activeKind = prefs.getString("activeKind", "images");
         if (!"images".equals(activeKind) && !"styles".equals(activeKind) && !"videos".equals(activeKind)) {
             activeKind = "images";
@@ -478,21 +508,30 @@ public class MainActivity extends Activity {
             return;
         }
         autoStart = autoStartCheck.isChecked();
+        downloadUrls = downloadUrlsCheck.isChecked();
         captureScreens = captureScreensCheck.isChecked();
-        includeStyles = stylesCheck.isChecked();
-        includeImages = imagesCheck.isChecked();
-        includeVideos = videosCheck.isChecked();
+        captureOnLoad = captureOnLoadCheck.isChecked();
+        captureEachScroll = captureEachScrollCheck.isChecked();
+        stripPageChrome = stripPageChromeCheck.isChecked();
+        clearCacheBeforeCrawl = clearCacheBeforeCrawlCheck.isChecked();
     }
 
     private void saveOptions() {
         prefs.edit()
                 .putBoolean("autoStart", autoStart)
+                .putBoolean("downloadUrls", downloadUrls)
                 .putBoolean("captureScreens", captureScreens)
+                .putBoolean("captureOnLoad", captureOnLoad)
+                .putBoolean("captureEachScroll", captureEachScroll)
+                .putBoolean("stripPageChrome", stripPageChrome)
+                .putBoolean("clearCacheBeforeCrawl", clearCacheBeforeCrawl)
                 .putBoolean("includeStyles", includeStyles)
                 .putBoolean("includeImages", includeImages)
                 .putBoolean("includeVideos", includeVideos)
                 .putInt("scrollSteps", scrollSteps)
                 .putInt("maxPerTab", maxPerTab)
+                .putInt("pageWaitMs", pageWaitMs)
+                .putInt("scrollPauseMs", scrollPauseMs)
                 .putString("activeKind", activeKind)
                 .apply();
     }
@@ -502,23 +541,25 @@ public class MainActivity extends Activity {
         if (optionsSummaryText == null) {
             return;
         }
-        String tabs = "";
-        if (includeStyles) {
-            tabs += "styles ";
+        String methods = "";
+        if (downloadUrls) {
+            methods += "URL ";
         }
-        if (includeImages) {
-            tabs += "images ";
+        if (captureScreens && captureOnLoad) {
+            methods += "load-capture ";
         }
-        if (includeVideos) {
-            tabs += "videos ";
+        if (captureScreens && captureEachScroll) {
+            methods += "scroll-capture ";
         }
-        if (tabs.length() == 0) {
-            tabs = "none";
+        if (methods.length() == 0) {
+            methods = "none";
         }
-        optionsSummaryText.setText("Tabs: " + tabs.trim()
-                + "  |  capture " + (captureScreens ? "on" : "off")
+        optionsSummaryText.setText("Active tab: " + displayKind(activeKind)
+                + "  |  methods " + methods.trim()
                 + "  |  scroll " + scrollSteps
                 + "  |  max " + maxPerTab
+                + "  |  wait " + formatSeconds(pageWaitMs)
+                + "/" + formatSeconds(scrollPauseMs)
                 + "  |  deleted memory " + deletedKeys.size());
     }
 
@@ -528,6 +569,12 @@ public class MainActivity extends Activity {
         }
         if (maxPerTabValueText != null) {
             maxPerTabValueText.setText(String.valueOf(maxPerTab));
+        }
+        if (pageWaitValueText != null) {
+            pageWaitValueText.setText(formatSeconds(pageWaitMs));
+        }
+        if (scrollPauseValueText != null) {
+            scrollPauseValueText.setText(formatSeconds(scrollPauseMs));
         }
     }
 
@@ -539,6 +586,18 @@ public class MainActivity extends Activity {
 
     private void changeMaxPerTab(int delta) {
         maxPerTab = clamp(maxPerTab + delta, 10, 300);
+        saveOptions();
+        updateOptionsSummary();
+    }
+
+    private void changePageWait(int delta) {
+        pageWaitMs = clamp(pageWaitMs + delta, 800, 8000);
+        saveOptions();
+        updateOptionsSummary();
+    }
+
+    private void changeScrollPause(int delta) {
+        scrollPauseMs = clamp(scrollPauseMs + delta, 500, 5000);
         saveOptions();
         updateOptionsSummary();
     }
@@ -675,7 +734,12 @@ public class MainActivity extends Activity {
                 }
                 setStatus("Loaded " + LABELS[targetIndex] + ". Reading visible thumbnails...");
                 scrollStep = 0;
-                mainHandler.postDelayed(MainActivity.this::crawlStep, 2200);
+                mainHandler.postDelayed(() -> {
+                    if (captureScreens && captureOnLoad) {
+                        captureVisiblePage(KINDS[targetIndex], LABELS[targetIndex], targetIndex);
+                    }
+                    mainHandler.postDelayed(MainActivity.this::crawlStep, 350);
+                }, pageWaitMs);
             }
         });
     }
@@ -710,9 +774,16 @@ public class MainActivity extends Activity {
         syncOptionsFromUi();
         setOnlyActiveKindEnabled();
         saveOptions();
+        if (!downloadUrls && !(captureScreens && (captureOnLoad || captureEachScroll))) {
+            setStatus("Turn on at least one method in Options.");
+            return;
+        }
         if (!hasEnabledTab()) {
             setStatus("Select Images, Styles, or Videos.");
             return;
+        }
+        if (clearCacheBeforeCrawl) {
+            webView.clearCache(false);
         }
         crawling = true;
         for (int i = 0; i < queuedByTab.length; i++) {
@@ -728,11 +799,6 @@ public class MainActivity extends Activity {
         includeStyles = "styles".equals(activeKind);
         includeImages = "images".equals(activeKind);
         includeVideos = "videos".equals(activeKind);
-        if (stylesCheck != null) {
-            stylesCheck.setChecked(includeStyles);
-            imagesCheck.setChecked(includeImages);
-            videosCheck.setChecked(includeVideos);
-        }
         updateOptionsSummary();
     }
 
@@ -756,13 +822,13 @@ public class MainActivity extends Activity {
             return;
         }
 
-        extractVisibleUrls();
+        extractVisibleUrls(captureScreens && captureEachScroll);
 
         if (scrollStep < scrollSteps) {
             scrollStep++;
             webView.evaluateJavascript(SCROLL_JS, value -> {
                 setStatus("Crawling " + LABELS[targetIndex] + " " + scrollStep + "/" + scrollSteps);
-                mainHandler.postDelayed(MainActivity.this::crawlStep, 1300);
+                mainHandler.postDelayed(MainActivity.this::crawlStep, scrollPauseMs);
             });
             return;
         }
@@ -772,7 +838,7 @@ public class MainActivity extends Activity {
         mainHandler.postDelayed(this::loadTarget, 700);
     }
 
-    private void extractVisibleUrls() {
+    private void extractVisibleUrls(boolean allowCapture) {
         final int kindIndex = targetIndex;
         final String kind = KINDS[kindIndex];
         final String label = LABELS[kindIndex];
@@ -789,7 +855,7 @@ public class MainActivity extends Activity {
                     return;
                 }
 
-                if (urls != null) {
+                if (downloadUrls && urls != null) {
                     for (int i = 0; i < urls.length(); i++) {
                         if (queuedByTab[kindIndex] >= maxPerTab) {
                             break;
@@ -808,14 +874,16 @@ public class MainActivity extends Activity {
                     }
                 }
 
-                if (captureScreens) {
+                if (allowCapture) {
                     captureVisiblePage(kind, label, kindIndex);
                 }
 
                 if (queued > 0) {
                     setStatus(label + ": queued " + queued + " new thumbnails.");
-                } else if (!captureScreens) {
-                    setStatus(label + ": no downloadable thumbnails found.");
+                } else if (!allowCapture && !downloadUrls) {
+                    setStatus(label + ": no active method for this step.");
+                } else if (!allowCapture) {
+                    setStatus(label + ": no downloadable thumbnails found. Try capture methods in Options.");
                 }
             } catch (JSONException e) {
                 setStatus("Could not read page data yet.");
@@ -827,7 +895,7 @@ public class MainActivity extends Activity {
         if (queuedByTab[kindIndex] >= maxPerTab || webView.getWidth() <= 0 || webView.getHeight() <= 0) {
             return;
         }
-        webView.evaluateJavascript(CLEAN_PAGE_JS, ignored -> {
+        Runnable capture = () -> {
             try {
                 int width = webView.getWidth();
                 int height = webView.getHeight();
@@ -852,7 +920,12 @@ public class MainActivity extends Activity {
             } catch (Exception ignoredCaptureError) {
                 setStatus(label + ": WebView capture failed.");
             }
-        });
+        };
+        if (stripPageChrome) {
+            webView.evaluateJavascript(CLEAN_PAGE_JS, ignored -> capture.run());
+        } else {
+            capture.run();
+        }
     }
 
     private void saveCapturedBytes(String kind, String label, String key, byte[] bytes) throws IOException {
@@ -1424,6 +1497,10 @@ public class MainActivity extends Activity {
         }
         double mb = kb / 1024.0;
         return String.format(Locale.US, "%.1f MB", mb);
+    }
+
+    private String formatSeconds(int millis) {
+        return String.format(Locale.US, "%.1fs", millis / 1000.0);
     }
 
     private int clamp(int value, int min, int max) {

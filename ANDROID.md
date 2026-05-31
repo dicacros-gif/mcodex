@@ -24,10 +24,16 @@ Behavior:
 Options:
 
 - Turn automatic crawl on or off.
-- Enable or disable styles, images, and video thumbnail tabs independently.
+- Pick the active source with the visible Images, Styles, and Videos tabs.
 - Change scroll depth from 1 to 30 steps.
 - Limit newly saved thumbnails per tab from 10 to 300.
 - Turn WebView capture saving on or off.
+- Turn direct image URL downloads on or off.
+- Capture once after a tab loads.
+- Capture again after each scroll step.
+- Hide page buttons before capture.
+- Clear the WebView cache before a crawl when the page appears stale.
+- Tune page-load wait and scroll-pause wait times.
 - Start a crawl manually.
 - Clean missing or duplicate archive entries.
 - Reset delete memory so previously deleted sources can be crawled again.
