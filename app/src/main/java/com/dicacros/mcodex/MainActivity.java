@@ -155,6 +155,7 @@ public class MainActivity extends Activity {
     private final Set<String> itemKeys = new HashSet<>();
     private final Set<String> deletedKeys = new HashSet<>();
     private final Set<String> downloadingKeys = new HashSet<>();
+    private final Set<String> selectedKeys = new HashSet<>();
 
     private File archiveDir;
     private File legacyMediaDir;
@@ -167,11 +168,13 @@ public class MainActivity extends Activity {
     private LinearLayout optionsPanel;
     private LinearLayout sessionBar;
     private LinearLayout kindTabs;
+    private LinearLayout selectionBar;
     private FrameLayout previewOverlay;
     private ZoomImageView previewImage;
     private GridLayout grid;
     private TextView statusText;
     private TextView countText;
+    private TextView selectionText;
     private TextView optionsSummaryText;
     private TextView scrollValueText;
     private TextView maxPerTabValueText;
@@ -198,6 +201,7 @@ public class MainActivity extends Activity {
     private int scrollPauseMs;
     private final int[] queuedByTab = new int[KINDS.length];
     private final Button[] kindTabButtons = new Button[KINDS.length];
+    private Button selectButton;
     private boolean autoStart;
     private boolean downloadUrls;
     private boolean captureScreens;
@@ -216,6 +220,8 @@ public class MainActivity extends Activity {
     private boolean crawling;
     private long externalSessionStartedAt;
     private boolean pendingExternalImport;
+    private boolean selectionMode;
+    private ArchiveItem previewItem;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -373,6 +379,10 @@ public class MainActivity extends Activity {
         explorerButton.setOnClickListener(v -> openExplorerSession());
         toolbar.addView(explorerButton);
 
+        selectButton = smallButton("Select");
+        selectButton.setOnClickListener(v -> toggleSelectionMode());
+        toolbar.addView(selectButton);
+
         kindTabs = buildKindTabs();
         uiRoot.addView(kindTabs, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -387,6 +397,9 @@ public class MainActivity extends Activity {
 
         optionsPanel = buildOptionsPanel();
         uiRoot.addView(optionsPanel);
+
+        selectionBar = buildSelectionBar();
+        uiRoot.addView(selectionBar);
 
         ScrollView scrollView = new ScrollView(this);
         scrollView.setFillViewport(true);
@@ -461,7 +474,48 @@ public class MainActivity extends Activity {
         FrameLayout.LayoutParams closeParams = new FrameLayout.LayoutParams(dp(52), dp(44), Gravity.TOP | Gravity.RIGHT);
         closeParams.setMargins(0, dp(14), dp(14), 0);
         overlay.addView(close, closeParams);
+
+        Button delete = smallButton("Delete");
+        delete.setTextSize(13f);
+        delete.setOnClickListener(v -> {
+            if (previewItem != null) {
+                ArchiveItem item = previewItem;
+                hidePreview();
+                deleteItem(item);
+            }
+        });
+        FrameLayout.LayoutParams deleteParams = new FrameLayout.LayoutParams(dp(92), dp(44), Gravity.TOP | Gravity.LEFT);
+        deleteParams.setMargins(dp(14), dp(14), 0, 0);
+        overlay.addView(delete, deleteParams);
         return overlay;
+    }
+
+    private LinearLayout buildSelectionBar() {
+        LinearLayout bar = new LinearLayout(this);
+        bar.setOrientation(LinearLayout.HORIZONTAL);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setPadding(0, dp(8), 0, dp(4));
+        bar.setVisibility(View.GONE);
+
+        selectionText = new TextView(this);
+        selectionText.setTextColor(Color.WHITE);
+        selectionText.setTextSize(13f);
+        selectionText.setTypeface(Typeface.DEFAULT_BOLD);
+        bar.addView(selectionText, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        Button allButton = smallButton("All");
+        allButton.setOnClickListener(v -> selectVisibleItems());
+        bar.addView(allButton);
+
+        Button deleteButton = smallButton("Delete");
+        deleteButton.setOnClickListener(v -> confirmDeleteSelected());
+        bar.addView(deleteButton);
+
+        Button cancelButton = smallButton("Cancel");
+        cancelButton.setOnClickListener(v -> clearSelectionMode());
+        bar.addView(cancelButton);
+
+        return bar;
     }
 
     private LinearLayout buildOptionsPanel() {
@@ -542,11 +596,22 @@ public class MainActivity extends Activity {
         resetDeletesButton.setOnClickListener(v -> resetDeletedMemory());
         actions.addView(resetDeletesButton);
 
+        panel.addView(actions);
+
+        LinearLayout deleteActions = new LinearLayout(this);
+        deleteActions.setOrientation(LinearLayout.HORIZONTAL);
+        deleteActions.setGravity(Gravity.CENTER_VERTICAL);
+        deleteActions.setPadding(0, dp(8), 0, 0);
+
+        Button deleteTabButton = smallButton("Delete tab");
+        deleteTabButton.setOnClickListener(v -> confirmDeleteCurrentTab());
+        deleteActions.addView(deleteTabButton);
+
         Button clearButton = smallButton("Delete all");
         clearButton.setOnClickListener(v -> confirmDeleteAll());
-        actions.addView(clearButton);
+        deleteActions.addView(clearButton);
 
-        panel.addView(actions);
+        panel.addView(deleteActions);
 
         LinearLayout externalActions = new LinearLayout(this);
         externalActions.setOrientation(LinearLayout.HORIZONTAL);
@@ -599,6 +664,8 @@ public class MainActivity extends Activity {
             button.setOnClickListener(v -> {
                 activeKind = KINDS[index];
                 saveOptions();
+                selectedKeys.clear();
+                selectionMode = false;
                 updateKindTabs();
                 importGalleryFolder();
                 renderArchive();
@@ -623,6 +690,32 @@ public class MainActivity extends Activity {
             button.setTextColor(selected ? Color.WHITE : Color.rgb(188, 196, 209));
             button.setBackground(rounded(selected ? Color.rgb(61, 105, 178) : Color.rgb(31, 36, 47), dp(8)));
         }
+    }
+
+    private void updateSelectionControls() {
+        pruneSelectedKeys();
+        if (selectionBar != null) {
+            selectionBar.setVisibility(selectionMode ? View.VISIBLE : View.GONE);
+        }
+        if (selectButton != null) {
+            selectButton.setText(selectionMode ? "Done" : "Select");
+        }
+        if (selectionText != null) {
+            selectionText.setText(selectedKeys.size() + " selected");
+        }
+    }
+
+    private void pruneSelectedKeys() {
+        if (selectedKeys.isEmpty()) {
+            return;
+        }
+        HashSet<String> liveKeys = new HashSet<>();
+        for (ArchiveItem item : items) {
+            if (item.key != null) {
+                liveKeys.add(item.key);
+            }
+        }
+        selectedKeys.retainAll(liveKeys);
     }
 
     private LinearLayout numberOptionRow(String label, Runnable minus, Runnable plus, int valueKind) {
@@ -858,9 +951,100 @@ public class MainActivity extends Activity {
     private void resetDeletedMemory() {
         int count = deletedKeys.size();
         deletedKeys.clear();
+        selectedKeys.clear();
+        selectionMode = false;
         saveArchive();
+        renderArchive();
         updateOptionsSummary();
         setStatus("Reset " + count + " deleted keys. Deleted sources can be crawled again.");
+    }
+
+    private void toggleSelectionMode() {
+        selectionMode = !selectionMode;
+        if (!selectionMode) {
+            selectedKeys.clear();
+        }
+        renderArchive();
+        setStatus(selectionMode ? "Selection mode is on." : "Selection mode is off.");
+    }
+
+    private void clearSelectionMode() {
+        selectedKeys.clear();
+        selectionMode = false;
+        renderArchive();
+        setStatus("Selection cleared.");
+    }
+
+    private void toggleSelected(ArchiveItem item) {
+        if (item == null || item.key == null) {
+            return;
+        }
+        if (selectedKeys.contains(item.key)) {
+            selectedKeys.remove(item.key);
+        } else {
+            selectedKeys.add(item.key);
+        }
+        renderArchive();
+    }
+
+    private void selectVisibleItems() {
+        selectionMode = true;
+        selectedKeys.clear();
+        for (ArchiveItem item : items) {
+            if (activeKind.equals(item.kind)) {
+                selectedKeys.add(item.key);
+            }
+        }
+        renderArchive();
+        setStatus("Selected " + selectedKeys.size() + " visible items.");
+    }
+
+    private void confirmDeleteSelected() {
+        ArrayList<ArchiveItem> targets = selectedArchiveItems();
+        if (targets.isEmpty()) {
+            setStatus("No selected items to delete.");
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Delete selected files?")
+                .setMessage(targets.size() + " selected saved images will be removed from the app and device storage.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Delete", (dialog, which) -> deleteItems(targets, "Deleted " + targets.size() + " selected items."))
+                .show();
+    }
+
+    private void confirmDeleteCurrentTab() {
+        ArrayList<ArchiveItem> targets = visibleArchiveItems();
+        if (targets.isEmpty()) {
+            setStatus("No " + displayKind(activeKind) + " items to delete.");
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Delete " + displayKind(activeKind) + "?")
+                .setMessage(targets.size() + " saved images in this tab will be removed from the app and device storage.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Delete", (dialog, which) -> deleteItems(targets, "Deleted " + targets.size() + " " + displayKind(activeKind) + " items."))
+                .show();
+    }
+
+    private ArrayList<ArchiveItem> selectedArchiveItems() {
+        ArrayList<ArchiveItem> targets = new ArrayList<>();
+        for (ArchiveItem item : items) {
+            if (selectedKeys.contains(item.key)) {
+                targets.add(item);
+            }
+        }
+        return targets;
+    }
+
+    private ArrayList<ArchiveItem> visibleArchiveItems() {
+        ArrayList<ArchiveItem> targets = new ArrayList<>();
+        for (ArchiveItem item : items) {
+            if (activeKind.equals(item.kind)) {
+                targets.add(item);
+            }
+        }
+        return targets;
     }
 
     private void confirmDeleteAll() {
@@ -882,6 +1066,8 @@ public class MainActivity extends Activity {
             deleteStoredImage(item);
         }
         deletedKeys.addAll(downloadingKeys);
+        selectedKeys.clear();
+        selectionMode = false;
         downloadingKeys.clear();
         pendingDownloads = 0;
         items.clear();
@@ -1592,14 +1778,36 @@ public class MainActivity extends Activity {
         return new StoredImage(target.getAbsolutePath(), Uri.fromFile(target).toString());
     }
 
-    private void deleteItem(ArchiveItem item) {
-        deletedKeys.add(item.key);
-        itemKeys.remove(item.key);
-        items.remove(item);
-        deleteStoredImage(item);
+    private void deleteItems(ArrayList<ArchiveItem> targets, String statusMessage) {
+        if (targets == null || targets.isEmpty()) {
+            return;
+        }
+        for (ArchiveItem item : targets) {
+            if (item == null || item.key == null) {
+                continue;
+            }
+            deletedKeys.add(item.key);
+            selectedKeys.remove(item.key);
+            itemKeys.remove(item.key);
+            items.remove(item);
+            deleteStoredImage(item);
+        }
+        if (selectedKeys.isEmpty()) {
+            selectionMode = false;
+        }
         saveArchive();
         renderArchive();
-        setStatus("Deleted one saved thumbnail from device storage.");
+        updateOptionsSummary();
+        setStatus(statusMessage);
+    }
+
+    private void deleteItem(ArchiveItem item) {
+        if (item == null) {
+            return;
+        }
+        ArrayList<ArchiveItem> targets = new ArrayList<>();
+        targets.add(item);
+        deleteItems(targets, "Deleted one saved thumbnail from device storage.");
     }
 
     private void renderArchive() {
@@ -1607,6 +1815,7 @@ public class MainActivity extends Activity {
             return;
         }
         updateKindTabs();
+        updateSelectionControls();
         grid.removeAllViews();
 
         int widthPx = getResources().getDisplayMetrics().widthPixels - dp(24);
@@ -1618,7 +1827,7 @@ public class MainActivity extends Activity {
         grid.setColumnCount(columns);
 
         int cardWidth = Math.max(dp(150), (widthPx - dp(10) * columns) / columns);
-        int imageHeight = columns == 1 ? dp(320) : dp(230);
+        int imageHeight = columns == 1 ? dp(360) : dp(270);
 
         ArrayList<ArchiveItem> ordered = new ArrayList<>(items);
         Collections.sort(ordered, (a, b) -> Long.compare(b.savedAt, a.savedAt));
@@ -1653,9 +1862,16 @@ public class MainActivity extends Activity {
 
             LinearLayout card = new LinearLayout(this);
             card.setOrientation(LinearLayout.VERTICAL);
-            card.setBackground(rounded(Color.rgb(26, 30, 38), dp(8)));
+            boolean selected = selectedKeys.contains(item.key);
+            card.setBackground(rounded(selected ? Color.rgb(45, 75, 120) : Color.rgb(26, 30, 38), dp(8)));
             card.setPadding(dp(6), dp(6), dp(6), dp(6));
-            card.setOnClickListener(v -> showPreview(item));
+            card.setOnClickListener(v -> {
+                if (selectionMode) {
+                    toggleSelected(item);
+                } else {
+                    showPreview(item);
+                }
+            });
 
             ImageView imageView = new ImageView(this);
             imageView.setScaleType(ImageView.ScaleType.CENTER_CROP);
@@ -1670,7 +1886,13 @@ public class MainActivity extends Activity {
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     imageHeight
             ));
-            imageView.setOnClickListener(v -> showPreview(item));
+            imageView.setOnClickListener(v -> {
+                if (selectionMode) {
+                    toggleSelected(item);
+                } else {
+                    showPreview(item);
+                }
+            });
 
             LinearLayout meta = new LinearLayout(this);
             meta.setOrientation(LinearLayout.HORIZONTAL);
@@ -1682,6 +1904,15 @@ public class MainActivity extends Activity {
             kindText.setTextColor(Color.rgb(210, 216, 225));
             kindText.setTextSize(12f);
             meta.addView(kindText, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+            if (selectionMode) {
+                Button pickButton = smallButton(selected ? "On" : "+");
+                pickButton.setContentDescription("Select saved thumbnail");
+                pickButton.setOnClickListener(v -> toggleSelected(item));
+                LinearLayout.LayoutParams pickParams = new LinearLayout.LayoutParams(dp(42), dp(34));
+                pickButton.setLayoutParams(pickParams);
+                meta.addView(pickButton);
+            }
 
             Button deleteButton = smallButton("X");
             deleteButton.setContentDescription("Delete saved thumbnail");
@@ -1767,6 +1998,7 @@ public class MainActivity extends Activity {
         if (uri == null || previewOverlay == null || previewImage == null) {
             return;
         }
+        previewItem = item;
         previewImage.resetZoom();
         previewImage.setImageURI(uri);
         previewOverlay.setVisibility(View.VISIBLE);
@@ -1780,12 +2012,14 @@ public class MainActivity extends Activity {
         if (previewImage != null) {
             previewImage.setImageDrawable(null);
         }
+        previewItem = null;
     }
 
     private void updateCounts() {
         int images = 0;
         int styles = 0;
         int videos = 0;
+        int visible = 0;
         for (ArchiveItem item : items) {
             if ("images".equals(item.kind)) {
                 images++;
@@ -1794,9 +2028,13 @@ public class MainActivity extends Activity {
             } else if ("videos".equals(item.kind)) {
                 videos++;
             }
+            if (activeKind.equals(item.kind)) {
+                visible++;
+            }
         }
         countText.setText(items.size() + " saved  |  images " + images + "  styles " + styles + "  videos " + videos
-                + "  |  tab " + displayKind(activeKind)
+                + "  |  tab " + displayKind(activeKind) + " " + visible
+                + (selectedKeys.isEmpty() ? "" : "  |  selected " + selectedKeys.size())
                 + "  |  " + formatBytes(directorySize(photosDir) + directorySize(galleryFallbackDir) + directorySize(legacyMediaDir))
                 + "  |  pending " + pendingDownloads);
     }

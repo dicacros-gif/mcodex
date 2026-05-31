@@ -9,6 +9,10 @@ Behavior:
 - Includes an in-app `Options` panel for crawl control.
 - Shows `Images`, `Styles`, and `Videos` as three visible tappable tabs.
 - Shows saved items under `TOP DAY` date sections, newest date first.
+- The main screen is the saved crawl/capture gallery. Thumbnails are large, tap
+  to preview with pinch zoom, and delete from the card or preview screen.
+- `Select` mode supports bulk selection, select-all for the visible tab, and
+  selected-item deletion.
 - The `Explorer` button opens the currently selected Midjourney tab in the
   visible WebView session.
 - The Explorer screen has `Save View` for saving the visible page as an image
@@ -57,6 +61,7 @@ Options:
   using the external fallback.
 - Import existing images from the Gallery `MJLocalArchive` album.
 - Clean missing or duplicate archive entries.
+- Delete the current visible tab.
 - Reset delete memory so previously deleted sources can be crawled again.
 - Delete all saved thumbnails that the app has recorded.
 - Tap an image to open a full-screen preview with pinch zoom and drag.
