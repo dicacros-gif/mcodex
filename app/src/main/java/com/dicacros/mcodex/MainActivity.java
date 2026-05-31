@@ -10,6 +10,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -66,6 +67,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
@@ -212,6 +214,8 @@ public class MainActivity extends Activity {
     private boolean includeVideos;
     private String activeKind;
     private boolean crawling;
+    private long externalSessionStartedAt;
+    private boolean pendingExternalImport;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -251,6 +255,18 @@ public class MainActivity extends Activity {
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == GALLERY_PERMISSION_REQUEST) {
+            if (pendingExternalImport) {
+                pendingExternalImport = false;
+                if (hasGalleryReadPermission()) {
+                    int count = importRecentExternalImages();
+                    renderArchive();
+                    setStatus("Imported " + Math.max(0, count) + " recent screenshots/downloads for " + displayKind(activeKind) + ".");
+                } else {
+                    renderArchive();
+                    setStatus("Gallery permission was not granted. Import Shots cannot read screenshots.");
+                }
+                return;
+            }
             int count = importGalleryFolder();
             renderArchive();
             if (hasGalleryReadPermission()) {
@@ -532,6 +548,31 @@ public class MainActivity extends Activity {
 
         panel.addView(actions);
 
+        LinearLayout externalActions = new LinearLayout(this);
+        externalActions.setOrientation(LinearLayout.HORIZONTAL);
+        externalActions.setGravity(Gravity.CENTER_VERTICAL);
+        externalActions.setPadding(0, dp(8), 0, 0);
+
+        Button midjourneyAppButton = smallButton("MJ App");
+        midjourneyAppButton.setOnClickListener(v -> openMidjourneyOutside(true));
+        externalActions.addView(midjourneyAppButton);
+
+        Button browserButton = smallButton("Browser");
+        browserButton.setOnClickListener(v -> openMidjourneyOutside(false));
+        externalActions.addView(browserButton);
+
+        Button importShotsButton = smallButton("Import Shots");
+        importShotsButton.setOnClickListener(v -> {
+            int count = importRecentExternalImages();
+            renderArchive();
+            if (count >= 0) {
+                setStatus("Imported " + count + " recent screenshots/downloads for " + displayKind(activeKind) + ".");
+            }
+        });
+        externalActions.addView(importShotsButton);
+
+        panel.addView(externalActions);
+
         optionsSummaryText = new TextView(this);
         optionsSummaryText.setTextColor(Color.rgb(180, 187, 199));
         optionsSummaryText.setTextSize(12f);
@@ -652,6 +693,7 @@ public class MainActivity extends Activity {
         maxPerTab = clamp(prefs.getInt("maxPerTab", DEFAULT_MAX_PER_TAB), 10, 300);
         pageWaitMs = clamp(prefs.getInt("pageWaitMs", 2200), 800, 8000);
         scrollPauseMs = clamp(prefs.getInt("scrollPauseMs", 1300), 500, 5000);
+        externalSessionStartedAt = prefs.getLong("externalSessionStartedAt", 0L);
         activeKind = prefs.getString("activeKind", "images");
         if (!"images".equals(activeKind) && !"styles".equals(activeKind) && !"videos".equals(activeKind)) {
             activeKind = "images";
@@ -706,6 +748,7 @@ public class MainActivity extends Activity {
                 .putInt("maxPerTab", maxPerTab)
                 .putInt("pageWaitMs", pageWaitMs)
                 .putInt("scrollPauseMs", scrollPauseMs)
+                .putLong("externalSessionStartedAt", externalSessionStartedAt)
                 .putString("activeKind", activeKind)
                 .apply();
     }
@@ -738,6 +781,7 @@ public class MainActivity extends Activity {
                 + "  |  max " + maxPerTab
                 + "  |  wait " + formatSeconds(pageWaitMs)
                 + "/" + formatSeconds(scrollPauseMs)
+                + "  |  external " + (externalSessionStartedAt > 0 ? "ready" : "not opened")
                 + "  |  deleted memory " + deletedKeys.size());
     }
 
@@ -1006,6 +1050,101 @@ public class MainActivity extends Activity {
             captureVisiblePage(KINDS[finalIndex], LABELS[finalIndex], finalIndex);
             mainHandler.postDelayed(() -> sessionBar.setVisibility(View.VISIBLE), 900);
         }, 120);
+    }
+
+    private void openMidjourneyOutside(boolean preferApp) {
+        syncOptionsFromUi();
+        saveOptions();
+        int index = indexForKind(activeKind);
+        if (index < 0) {
+            index = 1;
+        }
+
+        rememberExternalLaunch();
+        Uri uri = Uri.parse(URLS[index]);
+        Intent intent = externalViewIntent(uri);
+        String packageName = preferApp ? findMidjourneyHandlerPackage(intent) : findBrowserHandlerPackage(intent);
+        if (packageName != null) {
+            intent.setPackage(packageName);
+        }
+
+        try {
+            startActivity(intent);
+            setStatus((preferApp ? "Opened Midjourney app/browser. " : "Opened external browser. ")
+                    + "Take screenshots or save images, then return and tap Import Shots.");
+        } catch (Exception firstError) {
+            try {
+                intent.setPackage(null);
+                startActivity(Intent.createChooser(intent, "Open Midjourney"));
+                setStatus("Opened chooser. After screenshots/downloads, return and tap Import Shots.");
+            } catch (Exception secondError) {
+                setStatus("No external app or browser could open Midjourney.");
+            }
+        }
+    }
+
+    private Intent externalViewIntent(Uri uri) {
+        Intent intent = new Intent(Intent.ACTION_VIEW, uri);
+        intent.addCategory(Intent.CATEGORY_BROWSABLE);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        return intent;
+    }
+
+    private void rememberExternalLaunch() {
+        externalSessionStartedAt = System.currentTimeMillis();
+        prefs.edit().putLong("externalSessionStartedAt", externalSessionStartedAt).apply();
+        updateOptionsSummary();
+    }
+
+    private String findMidjourneyHandlerPackage(Intent baseIntent) {
+        List<ResolveInfo> handlers = getPackageManager().queryIntentActivities(baseIntent, 0);
+        for (ResolveInfo info : handlers) {
+            String label = resolveLabel(info);
+            String packageName = info.activityInfo == null ? "" : info.activityInfo.packageName;
+            String combined = (label + " " + packageName).toLowerCase(Locale.US);
+            if (combined.contains("midjourney")) {
+                return packageName;
+            }
+        }
+        return null;
+    }
+
+    private String findBrowserHandlerPackage(Intent baseIntent) {
+        String[] preferred = {
+                "com.android.chrome",
+                "com.sec.android.app.sbrowser",
+                "org.mozilla.firefox",
+                "com.brave.browser",
+                "com.microsoft.emmx",
+                "com.nhn.android.search"
+        };
+        List<ResolveInfo> handlers = getPackageManager().queryIntentActivities(baseIntent, 0);
+        for (String candidate : preferred) {
+            for (ResolveInfo info : handlers) {
+                String packageName = info.activityInfo == null ? "" : info.activityInfo.packageName;
+                if (candidate.equals(packageName)) {
+                    return packageName;
+                }
+            }
+        }
+        for (ResolveInfo info : handlers) {
+            String label = resolveLabel(info);
+            String packageName = info.activityInfo == null ? "" : info.activityInfo.packageName;
+            String combined = (label + " " + packageName).toLowerCase(Locale.US);
+            if (!getPackageName().equals(packageName) && !combined.contains("midjourney")) {
+                return packageName;
+            }
+        }
+        return null;
+    }
+
+    private String resolveLabel(ResolveInfo info) {
+        try {
+            CharSequence label = info.loadLabel(getPackageManager());
+            return label == null ? "" : label.toString();
+        } catch (Exception ignored) {
+            return "";
+        }
     }
 
     private void showCrawlerWebView() {
@@ -1563,7 +1702,7 @@ public class MainActivity extends Activity {
 
         if (visibleCount == 0) {
             TextView empty = new TextView(this);
-            empty.setText(displayKind(activeKind) + " saved items are empty. Tap Explorer to open the session, then tap Crawl.");
+            empty.setText(displayKind(activeKind) + " saved items are empty. Use Explorer/Crawl, or Options > MJ App/Browser then Import Shots.");
             empty.setTextColor(Color.rgb(180, 187, 199));
             empty.setTextSize(14f);
             empty.setGravity(Gravity.CENTER);
@@ -1738,6 +1877,117 @@ public class MainActivity extends Activity {
             saveArchive();
         }
         return Math.max(0, items.size() - before);
+    }
+
+    private int importRecentExternalImages() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !hasGalleryReadPermission()) {
+            pendingExternalImport = true;
+            ensureGalleryReadPermission();
+            setStatus("Allow gallery permission, then tap Import Shots again.");
+            return -1;
+        }
+
+        int before = items.size();
+        long since = externalSessionStartedAt > 0
+                ? Math.max(0L, externalSessionStartedAt - 60_000L)
+                : Math.max(0L, System.currentTimeMillis() - 24L * 60L * 60L * 1000L);
+
+        importRecentExternalMediaStore(since);
+
+        File pictures = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES);
+        File dcim = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM);
+        File downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+        importRecentExternalDirectory(new File(pictures, "Screenshots"), since);
+        importRecentExternalDirectory(new File(dcim, "Screenshots"), since);
+        importRecentExternalDirectory(new File(pictures, "Midjourney"), since);
+        importRecentExternalDirectory(downloads, since);
+
+        if (items.size() != before) {
+            saveArchive();
+        }
+        return Math.max(0, items.size() - before);
+    }
+
+    private void importRecentExternalMediaStore(long sinceMs) {
+        Uri collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
+        String[] projection = {
+                MediaStore.Images.Media._ID,
+                MediaStore.Images.Media.DISPLAY_NAME,
+                MediaStore.Images.Media.DATE_ADDED,
+                MediaStore.Images.Media.DATE_MODIFIED
+        };
+
+        String selection;
+        String[] selectionArgs;
+        String sinceSeconds = String.valueOf(Math.max(0L, sinceMs / 1000L));
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            selection = "("
+                    + MediaStore.Images.Media.RELATIVE_PATH + " LIKE ? OR "
+                    + MediaStore.Images.Media.RELATIVE_PATH + " LIKE ? OR "
+                    + MediaStore.Images.Media.RELATIVE_PATH + " LIKE ? OR "
+                    + MediaStore.Images.Media.RELATIVE_PATH + " LIKE ?"
+                    + ") AND " + MediaStore.Images.Media.DATE_ADDED + " >= ?";
+            selectionArgs = new String[]{
+                    Environment.DIRECTORY_PICTURES + "/Screenshots%",
+                    Environment.DIRECTORY_DCIM + "/Screenshots%",
+                    Environment.DIRECTORY_PICTURES + "/Midjourney%",
+                    Environment.DIRECTORY_DOWNLOADS + "%",
+                    sinceSeconds
+            };
+        } else {
+            selection = "("
+                    + MediaStore.Images.Media.DATA + " LIKE ? OR "
+                    + MediaStore.Images.Media.DATA + " LIKE ? OR "
+                    + MediaStore.Images.Media.DATA + " LIKE ? OR "
+                    + MediaStore.Images.Media.DATA + " LIKE ?"
+                    + ") AND " + MediaStore.Images.Media.DATE_ADDED + " >= ?";
+            selectionArgs = new String[]{
+                    "%/Pictures/Screenshots/%",
+                    "%/DCIM/Screenshots/%",
+                    "%/Pictures/Midjourney/%",
+                    "%/Download/%",
+                    sinceSeconds
+            };
+        }
+
+        try (Cursor cursor = getContentResolver().query(collection, projection, selection, selectionArgs, MediaStore.Images.Media.DATE_ADDED + " DESC")) {
+            if (cursor == null) {
+                return;
+            }
+            int idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID);
+            int nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME);
+            int addedColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_ADDED);
+            int modifiedColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_MODIFIED);
+            while (cursor.moveToNext()) {
+                long id = cursor.getLong(idColumn);
+                String name = cursor.getString(nameColumn);
+                Uri uri = ContentUris.withAppendedId(collection, id);
+                long savedAt = Math.max(cursor.getLong(addedColumn), cursor.getLong(modifiedColumn)) * 1000L;
+                String key = sha256("external:" + uri);
+                addImportedItem(activeKind, key, name, "", uri.toString(), savedAt);
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void importRecentExternalDirectory(File dir, long sinceMs) {
+        if (dir == null || !dir.exists() || !dir.isDirectory()) {
+            return;
+        }
+        File[] files = dir.listFiles();
+        if (files == null) {
+            return;
+        }
+        for (File file : files) {
+            if (file == null || !file.isFile() || file.length() == 0 || !hasImageExtension(file.getName())) {
+                continue;
+            }
+            if (file.lastModified() + 1000L < sinceMs) {
+                continue;
+            }
+            String key = sha256("external-file:" + file.getAbsolutePath());
+            addImportedItem(activeKind, key, file.getName(), file.getAbsolutePath(), Uri.fromFile(file).toString(), file.lastModified());
+        }
     }
 
     private void importFromMediaStore() {
