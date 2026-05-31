@@ -4,12 +4,14 @@ This repository includes a native Android app under `app/`.
 
 Behavior:
 
-- Opens to the saved-image gallery first. Crawling starts only when `Crawl` is
+- Opens to the saved-image `Gallery` tab first, showing every crawled,
+  captured, and imported item together. Crawling starts only when `Crawl` is
   tapped or when the user turns automatic crawl back on.
 - Includes an in-app `Options` panel for crawl control.
 - Uses public no-login WebView mode by default, with the system WebView user
   agent and cleared Midjourney cookies/storage before opening Explore.
-- Shows `Images`, `Styles`, and `Videos` as three visible tappable tabs.
+- Shows `Gallery`, `Images`, `Styles`, and `Videos` as visible tappable tabs.
+  `Gallery` is the default all-items view; the other tabs filter by source.
 - Shows saved items under `TOP DAY` date sections, newest date first.
 - The main screen is the saved crawl/capture gallery. Thumbnails are large, tap
   to preview with pinch zoom, and delete from the card or preview screen.

@@ -81,6 +81,8 @@ public class MainActivity extends Activity {
     private static final int MAX_ASSET_BYTES = 25 * 1024 * 1024;
     private static final int GALLERY_PERMISSION_REQUEST = 71;
     private static final String MAIN_GALLERY_DEFAULT_KEY = "mainGalleryDefaultV3";
+    private static final String MAIN_GALLERY_TAB_KEY = "mainGalleryTabV1";
+    private static final String KIND_ALL = "all";
     private static final String[] KINDS = {"styles", "images", "videos"};
     private static final String[] LABELS = {"Styles", "Images", "Videos"};
     private static final int[] DISPLAY_KIND_ORDER = {1, 0, 2};
@@ -203,6 +205,7 @@ public class MainActivity extends Activity {
     private int scrollPauseMs;
     private final int[] queuedByTab = new int[KINDS.length];
     private final Button[] kindTabButtons = new Button[KINDS.length];
+    private Button galleryTabButton;
     private Button selectButton;
     private boolean autoStart;
     private boolean downloadUrls;
@@ -664,6 +667,25 @@ public class MainActivity extends Activity {
         tabs.setGravity(Gravity.CENTER_VERTICAL);
         tabs.setPadding(0, dp(10), 0, 0);
 
+        galleryTabButton = new Button(this);
+        galleryTabButton.setText("Gallery");
+        galleryTabButton.setAllCaps(false);
+        galleryTabButton.setTextSize(13f);
+        galleryTabButton.setTypeface(Typeface.DEFAULT_BOLD);
+        galleryTabButton.setPadding(dp(8), 0, dp(8), 0);
+        galleryTabButton.setOnClickListener(v -> {
+            activeKind = KIND_ALL;
+            saveOptions();
+            selectedKeys.clear();
+            selectionMode = false;
+            updateKindTabs();
+            importGalleryFolder();
+            renderArchive();
+        });
+        LinearLayout.LayoutParams galleryParams = new LinearLayout.LayoutParams(0, dp(42), 1f);
+        galleryParams.setMargins(dp(3), 0, dp(3), 0);
+        tabs.addView(galleryTabButton, galleryParams);
+
         for (int index : DISPLAY_KIND_ORDER) {
             Button button = new Button(this);
             button.setText(LABELS[index]);
@@ -691,6 +713,11 @@ public class MainActivity extends Activity {
     }
 
     private void updateKindTabs() {
+        if (galleryTabButton != null) {
+            boolean selected = KIND_ALL.equals(activeKind);
+            galleryTabButton.setTextColor(selected ? Color.WHITE : Color.rgb(188, 196, 209));
+            galleryTabButton.setBackground(rounded(selected ? Color.rgb(61, 105, 178) : Color.rgb(31, 36, 47), dp(8)));
+        }
         for (int i = 0; i < kindTabButtons.length; i++) {
             Button button = kindTabButtons[i];
             if (button == null) {
@@ -798,21 +825,31 @@ public class MainActivity extends Activity {
         pageWaitMs = clamp(prefs.getInt("pageWaitMs", 2200), 800, 8000);
         scrollPauseMs = clamp(prefs.getInt("scrollPauseMs", 1300), 500, 5000);
         externalSessionStartedAt = prefs.getLong("externalSessionStartedAt", 0L);
-        activeKind = prefs.getString("activeKind", "images");
-        if (!"images".equals(activeKind) && !"styles".equals(activeKind) && !"videos".equals(activeKind)) {
-            activeKind = "images";
+        activeKind = prefs.getString("activeKind", KIND_ALL);
+        if (!KIND_ALL.equals(activeKind) && !"images".equals(activeKind) && !"styles".equals(activeKind) && !"videos".equals(activeKind)) {
+            activeKind = KIND_ALL;
         }
     }
 
     private void migrateMainGalleryDefault() {
-        if (prefs.getBoolean(MAIN_GALLERY_DEFAULT_KEY, false)) {
+        boolean changed = false;
+        SharedPreferences.Editor editor = prefs.edit();
+        if (!prefs.getBoolean(MAIN_GALLERY_DEFAULT_KEY, false)) {
+            autoStart = false;
+            editor.putBoolean("autoStart", false);
+            editor.putBoolean(MAIN_GALLERY_DEFAULT_KEY, true);
+            changed = true;
+        }
+        if (!prefs.getBoolean(MAIN_GALLERY_TAB_KEY, false)) {
+            activeKind = KIND_ALL;
+            editor.putString("activeKind", KIND_ALL);
+            editor.putBoolean(MAIN_GALLERY_TAB_KEY, true);
+            changed = true;
+        }
+        if (!changed) {
             return;
         }
-        autoStart = false;
-        prefs.edit()
-                .putBoolean("autoStart", false)
-                .putBoolean(MAIN_GALLERY_DEFAULT_KEY, true)
-                .apply();
+        editor.apply();
     }
 
     private void syncOptionsFromUi() {
@@ -1005,7 +1042,7 @@ public class MainActivity extends Activity {
         selectionMode = true;
         selectedKeys.clear();
         for (ArchiveItem item : items) {
-            if (activeKind.equals(item.kind)) {
+            if (isVisibleItem(item)) {
                 selectedKeys.add(item.key);
             }
         }
@@ -1054,11 +1091,15 @@ public class MainActivity extends Activity {
     private ArrayList<ArchiveItem> visibleArchiveItems() {
         ArrayList<ArchiveItem> targets = new ArrayList<>();
         for (ArchiveItem item : items) {
-            if (activeKind.equals(item.kind)) {
+            if (isVisibleItem(item)) {
                 targets.add(item);
             }
         }
         return targets;
+    }
+
+    private boolean isVisibleItem(ArchiveItem item) {
+        return item != null && (KIND_ALL.equals(activeKind) || activeKind.equals(item.kind));
     }
 
     private void confirmDeleteAll() {
@@ -1467,6 +1508,13 @@ public class MainActivity extends Activity {
     }
 
     private void setOnlyActiveKindEnabled() {
+        if (KIND_ALL.equals(activeKind)) {
+            includeStyles = true;
+            includeImages = true;
+            includeVideos = true;
+            updateOptionsSummary();
+            return;
+        }
         includeStyles = "styles".equals(activeKind);
         includeImages = "images".equals(activeKind);
         includeVideos = "videos".equals(activeKind);
@@ -1914,7 +1962,7 @@ public class MainActivity extends Activity {
         int visibleCount = 0;
 
         for (ArchiveItem item : ordered) {
-            if (!activeKind.equals(item.kind)) {
+            if (!isVisibleItem(item)) {
                 continue;
             }
             visibleCount++;
@@ -2104,7 +2152,7 @@ public class MainActivity extends Activity {
             } else if ("videos".equals(item.kind)) {
                 videos++;
             }
-            if (activeKind.equals(item.kind)) {
+            if (isVisibleItem(item)) {
                 visible++;
             }
         }
@@ -2116,6 +2164,9 @@ public class MainActivity extends Activity {
     }
 
     private String displayKind(String kind) {
+        if (KIND_ALL.equals(kind)) {
+            return "Gallery";
+        }
         if ("images".equals(kind)) {
             return "Images";
         }
@@ -2278,7 +2329,7 @@ public class MainActivity extends Activity {
                 Uri uri = ContentUris.withAppendedId(collection, id);
                 long savedAt = Math.max(cursor.getLong(addedColumn), cursor.getLong(modifiedColumn)) * 1000L;
                 String key = sha256("external:" + uri);
-                addImportedItem(activeKind, key, name, "", uri.toString(), savedAt);
+                addImportedItem(fallbackImportKind(), key, name, "", uri.toString(), savedAt);
             }
         } catch (Exception ignored) {
         }
@@ -2300,7 +2351,7 @@ public class MainActivity extends Activity {
                 continue;
             }
             String key = sha256("external-file:" + file.getAbsolutePath());
-            addImportedItem(activeKind, key, file.getName(), file.getAbsolutePath(), Uri.fromFile(file).toString(), file.lastModified());
+            addImportedItem(fallbackImportKind(), key, file.getName(), file.getAbsolutePath(), Uri.fromFile(file).toString(), file.lastModified());
         }
     }
 
@@ -2400,7 +2451,14 @@ public class MainActivity extends Activity {
         if (lower.startsWith("images-") || lower.contains("-images-")) {
             return "images";
         }
-        return activeKind != null ? activeKind : "images";
+        return fallbackImportKind();
+    }
+
+    private String fallbackImportKind() {
+        if ("styles".equals(activeKind) || "videos".equals(activeKind) || "images".equals(activeKind)) {
+            return activeKind;
+        }
+        return "images";
     }
 
     private void saveArchive() {
