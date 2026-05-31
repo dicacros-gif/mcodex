@@ -6,6 +6,8 @@ Behavior:
 
 - Starts a Midjourney Explore crawl when the app opens.
 - Includes an in-app `Options` panel for crawl control.
+- Shows `Images`, `Styles`, and `Videos` as three visible tappable tabs.
+- Shows saved items under `TOP DAY` date sections, newest date first.
 - Saves WebView screen captures by default, so the app can still keep images
   when the page does not expose downloadable thumbnail URLs.
 - Crawls these tabs through the device WebView session:

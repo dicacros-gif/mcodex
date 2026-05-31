@@ -45,8 +45,10 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Date;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
@@ -60,6 +62,7 @@ public class MainActivity extends Activity {
     private static final int MAX_ASSET_BYTES = 25 * 1024 * 1024;
     private static final String[] KINDS = {"styles", "images", "videos"};
     private static final String[] LABELS = {"Styles", "Images", "Videos"};
+    private static final int[] DISPLAY_KIND_ORDER = {1, 0, 2};
     private static final String[] URLS = {
             "https://www.midjourney.com/explore?tab=styles_top",
             "https://www.midjourney.com/explore?tab=top",
@@ -105,7 +108,7 @@ public class MainActivity extends Activity {
                     + "});"
                     + "document.querySelectorAll('a,button,[role=\"button\"]').forEach(function(el){"
                     + "const t=(el.innerText||el.textContent||'').trim().toLowerCase();"
-                    + "if(t==='create'||t==='updates'||t==='update'||t==='menu'||t==='크리에이트'||t==='업데이트'){hide(el);}"
+                    + "if(t==='create'||t==='updates'||t==='update'||t==='menu'||t==='\\ud06c\\ub9ac\\uc5d0\\uc774\\ud2b8'||t==='\\uc5c5\\ub370\\uc774\\ud2b8'){hide(el);}"
                     + "});"
                     + "return true;"
                     + "})();";
@@ -126,6 +129,7 @@ public class MainActivity extends Activity {
     private LinearLayout uiRoot;
     private LinearLayout optionsPanel;
     private LinearLayout sessionBar;
+    private LinearLayout kindTabs;
     private GridLayout grid;
     private TextView statusText;
     private TextView countText;
@@ -144,11 +148,13 @@ public class MainActivity extends Activity {
     private int scrollSteps;
     private int maxPerTab;
     private final int[] queuedByTab = new int[KINDS.length];
+    private final Button[] kindTabButtons = new Button[KINDS.length];
     private boolean autoStart;
     private boolean captureScreens;
     private boolean includeStyles;
     private boolean includeImages;
     private boolean includeVideos;
+    private String activeKind;
     private boolean crawling;
 
     @Override
@@ -244,6 +250,12 @@ public class MainActivity extends Activity {
         Button sessionButton = smallButton("Session");
         sessionButton.setOnClickListener(v -> showSession(true));
         toolbar.addView(sessionButton);
+
+        kindTabs = buildKindTabs();
+        uiRoot.addView(kindTabs, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
 
         statusText = new TextView(this);
         statusText.setTextColor(Color.rgb(210, 216, 225));
@@ -361,6 +373,47 @@ public class MainActivity extends Activity {
         return panel;
     }
 
+    private LinearLayout buildKindTabs() {
+        LinearLayout tabs = new LinearLayout(this);
+        tabs.setOrientation(LinearLayout.HORIZONTAL);
+        tabs.setGravity(Gravity.CENTER_VERTICAL);
+        tabs.setPadding(0, dp(10), 0, 0);
+
+        for (int index : DISPLAY_KIND_ORDER) {
+            Button button = new Button(this);
+            button.setText(LABELS[index]);
+            button.setAllCaps(false);
+            button.setTextSize(13f);
+            button.setTypeface(Typeface.DEFAULT_BOLD);
+            button.setPadding(dp(8), 0, dp(8), 0);
+            button.setOnClickListener(v -> {
+                activeKind = KINDS[index];
+                saveOptions();
+                updateKindTabs();
+                renderArchive();
+            });
+            kindTabButtons[index] = button;
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(42), 1f);
+            params.setMargins(dp(3), 0, dp(3), 0);
+            tabs.addView(button, params);
+        }
+
+        updateKindTabs();
+        return tabs;
+    }
+
+    private void updateKindTabs() {
+        for (int i = 0; i < kindTabButtons.length; i++) {
+            Button button = kindTabButtons[i];
+            if (button == null) {
+                continue;
+            }
+            boolean selected = KINDS[i].equals(activeKind);
+            button.setTextColor(selected ? Color.WHITE : Color.rgb(188, 196, 209));
+            button.setBackground(rounded(selected ? Color.rgb(61, 105, 178) : Color.rgb(31, 36, 47), dp(8)));
+        }
+    }
+
     private LinearLayout numberOptionRow(String label, Runnable minus, Runnable plus, boolean scrollRow) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
@@ -414,6 +467,10 @@ public class MainActivity extends Activity {
         includeVideos = prefs.getBoolean("includeVideos", true);
         scrollSteps = clamp(prefs.getInt("scrollSteps", DEFAULT_SCROLL_STEPS), 1, 30);
         maxPerTab = clamp(prefs.getInt("maxPerTab", DEFAULT_MAX_PER_TAB), 10, 300);
+        activeKind = prefs.getString("activeKind", "images");
+        if (!"images".equals(activeKind) && !"styles".equals(activeKind) && !"videos".equals(activeKind)) {
+            activeKind = "images";
+        }
     }
 
     private void syncOptionsFromUi() {
@@ -436,6 +493,7 @@ public class MainActivity extends Activity {
                 .putBoolean("includeVideos", includeVideos)
                 .putInt("scrollSteps", scrollSteps)
                 .putInt("maxPerTab", maxPerTab)
+                .putString("activeKind", activeKind)
                 .apply();
     }
 
@@ -650,9 +708,10 @@ public class MainActivity extends Activity {
             return;
         }
         syncOptionsFromUi();
+        setOnlyActiveKindEnabled();
         saveOptions();
         if (!hasEnabledTab()) {
-            setStatus("Turn on at least one crawl tab in Options.");
+            setStatus("Select Images, Styles, or Videos.");
             return;
         }
         crawling = true;
@@ -663,6 +722,18 @@ public class MainActivity extends Activity {
         scrollStep = 0;
         setStatus("Starting device crawl...");
         loadTarget();
+    }
+
+    private void setOnlyActiveKindEnabled() {
+        includeStyles = "styles".equals(activeKind);
+        includeImages = "images".equals(activeKind);
+        includeVideos = "videos".equals(activeKind);
+        if (stylesCheck != null) {
+            stylesCheck.setChecked(includeStyles);
+            imagesCheck.setChecked(includeImages);
+            videosCheck.setChecked(includeVideos);
+        }
+        updateOptionsSummary();
     }
 
     private void loadTarget() {
@@ -950,6 +1021,7 @@ public class MainActivity extends Activity {
         if (grid == null) {
             return;
         }
+        updateKindTabs();
         grid.removeAllViews();
 
         int widthPx = getResources().getDisplayMetrics().widthPixels - dp(24);
@@ -966,7 +1038,34 @@ public class MainActivity extends Activity {
         ArrayList<ArchiveItem> ordered = new ArrayList<>(items);
         Collections.sort(ordered, (a, b) -> Long.compare(b.savedAt, a.savedAt));
 
+        String lastDay = "";
+        SimpleDateFormat dayFormat = new SimpleDateFormat("yyyy.MM.dd", Locale.KOREA);
+        SimpleDateFormat timeFormat = new SimpleDateFormat("HH:mm", Locale.KOREA);
+        int visibleCount = 0;
+
         for (ArchiveItem item : ordered) {
+            if (!activeKind.equals(item.kind)) {
+                continue;
+            }
+            visibleCount++;
+
+            String day = dayFormat.format(new Date(item.savedAt));
+            if (!day.equals(lastDay)) {
+                lastDay = day;
+                TextView dayHeader = new TextView(this);
+                dayHeader.setText("TOP DAY  " + day);
+                dayHeader.setTextColor(Color.WHITE);
+                dayHeader.setTextSize(16f);
+                dayHeader.setTypeface(Typeface.DEFAULT_BOLD);
+                dayHeader.setPadding(dp(5), dp(16), dp(5), dp(8));
+                GridLayout.LayoutParams headerParams = new GridLayout.LayoutParams();
+                headerParams.width = ViewGroup.LayoutParams.MATCH_PARENT;
+                headerParams.height = ViewGroup.LayoutParams.WRAP_CONTENT;
+                headerParams.columnSpec = GridLayout.spec(0, columns);
+                dayHeader.setLayoutParams(headerParams);
+                grid.addView(dayHeader);
+            }
+
             LinearLayout card = new LinearLayout(this);
             card.setOrientation(LinearLayout.VERTICAL);
             card.setBackground(rounded(Color.rgb(26, 30, 38), dp(8)));
@@ -992,7 +1091,7 @@ public class MainActivity extends Activity {
             meta.setPadding(0, dp(6), 0, 0);
 
             TextView kindText = new TextView(this);
-            kindText.setText(item.kind);
+            kindText.setText(displayKind(item.kind) + "  " + timeFormat.format(new Date(item.savedAt)));
             kindText.setTextColor(Color.rgb(210, 216, 225));
             kindText.setTextSize(12f);
             meta.addView(kindText, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
@@ -1012,6 +1111,21 @@ public class MainActivity extends Activity {
             params.setMargins(dp(5), dp(5), dp(5), dp(9));
             card.setLayoutParams(params);
             grid.addView(card);
+        }
+
+        if (visibleCount == 0) {
+            TextView empty = new TextView(this);
+            empty.setText("No saved " + activeKind + " yet. Tap Crawl.");
+            empty.setTextColor(Color.rgb(180, 187, 199));
+            empty.setTextSize(14f);
+            empty.setGravity(Gravity.CENTER);
+            empty.setPadding(0, dp(36), 0, dp(36));
+            GridLayout.LayoutParams emptyParams = new GridLayout.LayoutParams();
+            emptyParams.width = ViewGroup.LayoutParams.MATCH_PARENT;
+            emptyParams.height = ViewGroup.LayoutParams.WRAP_CONTENT;
+            emptyParams.columnSpec = GridLayout.spec(0, columns);
+            empty.setLayoutParams(emptyParams);
+            grid.addView(empty);
         }
 
         updateCounts();
@@ -1050,8 +1164,22 @@ public class MainActivity extends Activity {
             }
         }
         countText.setText(items.size() + " saved  |  images " + images + "  styles " + styles + "  videos " + videos
+                + "  |  tab " + displayKind(activeKind)
                 + "  |  " + formatBytes(directorySize(photosDir) + directorySize(legacyMediaDir))
                 + "  |  pending " + pendingDownloads);
+    }
+
+    private String displayKind(String kind) {
+        if ("images".equals(kind)) {
+            return "Images";
+        }
+        if ("styles".equals(kind)) {
+            return "Styles";
+        }
+        if ("videos".equals(kind)) {
+            return "Videos";
+        }
+        return kind;
     }
 
     private void setStatus(String message) {
@@ -1092,6 +1220,9 @@ public class MainActivity extends Activity {
                 File file = new File(item.localPath);
                 if (!file.exists() || file.length() == 0) {
                     continue;
+                }
+                if (item.savedAt <= 0L) {
+                    item.savedAt = file.lastModified() > 0L ? file.lastModified() : System.currentTimeMillis();
                 }
                 if (itemKeys.contains(item.key)) {
                     deleteFileQuietly(file);
