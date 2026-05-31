@@ -4,6 +4,8 @@ This repository includes a native Android app under `app/`.
 
 Behavior:
 
+- Uses an `MJ` launcher icon so the installed package is recognizable as the
+  Midjourney archive app.
 - Opens to the saved-image `Gallery` tab first, showing every crawled,
   captured, and imported item together. Crawling starts only when `Crawl` is
   tapped or when the user turns automatic crawl back on.
@@ -29,6 +31,9 @@ Behavior:
   empty.
 - Saves WebView screen captures by default, so the app can still keep images
   when the page does not expose downloadable thumbnail URLs.
+- Automatically falls back to visible-page capture when URL crawling finds no
+  public thumbnails, when page data is unreadable, or when the public page does
+  not expose image URLs.
 - Crawls these tabs through the device WebView session:
   - `https://www.midjourney.com/explore?tab=styles_top`
   - `https://www.midjourney.com/explore?tab=top`
@@ -50,6 +55,7 @@ Options:
 - Turn direct image URL downloads on or off.
 - Capture once after a tab loads.
 - Capture again after each scroll step.
+- Auto capture when URL crawl finds nothing.
 - Show the WebView while crawling so the actual signed-in session is rendered
   before screen capture.
 - Try PixelCopy screen capture when the WebView is visible.

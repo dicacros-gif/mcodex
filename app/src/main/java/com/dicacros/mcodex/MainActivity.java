@@ -195,6 +195,7 @@ public class MainActivity extends Activity {
     private CheckBox stripPageChromeCheck;
     private CheckBox clearCacheBeforeCrawlCheck;
     private CheckBox publicNoLoginModeCheck;
+    private CheckBox autoCaptureFallbackCheck;
     private String userAgent;
     private int targetIndex;
     private int scrollStep;
@@ -219,6 +220,7 @@ public class MainActivity extends Activity {
     private boolean stripPageChrome;
     private boolean clearCacheBeforeCrawl;
     private boolean publicNoLoginMode;
+    private boolean autoCaptureFallback;
     private boolean includeStyles;
     private boolean includeImages;
     private boolean includeVideos;
@@ -547,6 +549,7 @@ public class MainActivity extends Activity {
         stripPageChromeCheck = optionCheck("Hide page buttons before capture", stripPageChrome);
         clearCacheBeforeCrawlCheck = optionCheck("Clear WebView cache before crawl", clearCacheBeforeCrawl);
         publicNoLoginModeCheck = optionCheck("Public no-login WebView", publicNoLoginMode);
+        autoCaptureFallbackCheck = optionCheck("Auto capture when crawl finds nothing", autoCaptureFallback);
         checks.addView(autoStartCheck);
         checks.addView(downloadUrlsCheck);
         checks.addView(captureScreensCheck);
@@ -559,6 +562,7 @@ public class MainActivity extends Activity {
         checks.addView(stripPageChromeCheck);
         checks.addView(clearCacheBeforeCrawlCheck);
         checks.addView(publicNoLoginModeCheck);
+        checks.addView(autoCaptureFallbackCheck);
 
         View.OnClickListener optionChanged = v -> {
             syncOptionsFromUi();
@@ -577,6 +581,7 @@ public class MainActivity extends Activity {
         stripPageChromeCheck.setOnClickListener(optionChanged);
         clearCacheBeforeCrawlCheck.setOnClickListener(optionChanged);
         publicNoLoginModeCheck.setOnClickListener(optionChanged);
+        autoCaptureFallbackCheck.setOnClickListener(optionChanged);
 
         panel.addView(numberOptionRow("Scroll steps", () -> changeScrollSteps(-1), () -> changeScrollSteps(1), 0));
         panel.addView(numberOptionRow("Max new per tab", () -> changeMaxPerTab(-10), () -> changeMaxPerTab(10), 1));
@@ -817,6 +822,7 @@ public class MainActivity extends Activity {
         stripPageChrome = prefs.getBoolean("stripPageChrome", true);
         clearCacheBeforeCrawl = prefs.getBoolean("clearCacheBeforeCrawl", false);
         publicNoLoginMode = prefs.getBoolean("publicNoLoginMode", true);
+        autoCaptureFallback = prefs.getBoolean("autoCaptureFallback", true);
         includeStyles = prefs.getBoolean("includeStyles", true);
         includeImages = prefs.getBoolean("includeImages", true);
         includeVideos = prefs.getBoolean("includeVideos", true);
@@ -868,6 +874,7 @@ public class MainActivity extends Activity {
         stripPageChrome = stripPageChromeCheck.isChecked();
         clearCacheBeforeCrawl = clearCacheBeforeCrawlCheck.isChecked();
         publicNoLoginMode = publicNoLoginModeCheck.isChecked();
+        autoCaptureFallback = autoCaptureFallbackCheck.isChecked();
     }
 
     private void saveOptions() {
@@ -884,6 +891,7 @@ public class MainActivity extends Activity {
                 .putBoolean("stripPageChrome", stripPageChrome)
                 .putBoolean("clearCacheBeforeCrawl", clearCacheBeforeCrawl)
                 .putBoolean("publicNoLoginMode", publicNoLoginMode)
+                .putBoolean("autoCaptureFallback", autoCaptureFallback)
                 .putBoolean("includeStyles", includeStyles)
                 .putBoolean("includeImages", includeImages)
                 .putBoolean("includeVideos", includeVideos)
@@ -913,6 +921,9 @@ public class MainActivity extends Activity {
         }
         if (captureScreens && fullPageCapture) {
             methods += "full-page ";
+        }
+        if (captureScreens && autoCaptureFallback) {
+            methods += "fallback-capture ";
         }
         if (methods.length() == 0) {
             methods = "none";
@@ -1576,7 +1587,10 @@ public class MainActivity extends Activity {
                 int queued = 0;
 
                 if (looksBlocked(pageTitle, pageText)) {
-                    setStatus(label + " is blocked by a challenge page. Open it normally in the WebView session.");
+                    if (shouldFallbackCapture(false, queued)) {
+                        captureVisiblePage(kind, label, kindIndex);
+                    }
+                    setStatus(label + ": public page did not expose images. Saved visible page if capture is available.");
                     return;
                 }
 
@@ -1599,21 +1613,39 @@ public class MainActivity extends Activity {
                     }
                 }
 
+                boolean capturedThisStep = false;
                 if (allowCapture) {
                     captureVisiblePage(kind, label, kindIndex);
+                    capturedThisStep = true;
+                }
+
+                if (shouldFallbackCapture(capturedThisStep, queued)) {
+                    captureVisiblePage(kind, label, kindIndex);
+                    capturedThisStep = true;
                 }
 
                 if (queued > 0) {
                     setStatus(label + ": queued " + queued + " new thumbnails.");
+                } else if (capturedThisStep) {
+                    setStatus(label + ": URL crawl found nothing, saved visible public page.");
                 } else if (!allowCapture && !downloadUrls) {
                     setStatus(label + ": no active method for this step.");
                 } else if (!allowCapture) {
                     setStatus(label + ": no downloadable thumbnails found. Try capture methods in Options.");
                 }
             } catch (JSONException e) {
-                setStatus("Could not read page data yet.");
+                if (captureScreens && autoCaptureFallback) {
+                    captureVisiblePage(kind, label, kindIndex);
+                    setStatus(label + ": page data was unreadable, saved visible page instead.");
+                } else {
+                    setStatus("Could not read page data yet.");
+                }
             }
         });
+    }
+
+    private boolean shouldFallbackCapture(boolean alreadyCaptured, int queued) {
+        return captureScreens && autoCaptureFallback && !alreadyCaptured && queued == 0;
     }
 
     private void captureVisiblePage(String kind, String label, int kindIndex) {
