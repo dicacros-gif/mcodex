@@ -1,6 +1,8 @@
 package com.dicacros.mcodex;
 
 import android.app.Activity;
+import android.app.AlertDialog;
+import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -20,6 +22,7 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.FrameLayout;
 import android.widget.GridLayout;
 import android.widget.ImageView;
@@ -50,7 +53,9 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class MainActivity extends Activity {
-    private static final int SCROLL_STEPS = 10;
+    private static final String PREFS_NAME = "mj_local_archive_options";
+    private static final int DEFAULT_SCROLL_STEPS = 10;
+    private static final int DEFAULT_MAX_PER_TAB = 80;
     private static final int MAX_ASSET_BYTES = 25 * 1024 * 1024;
     private static final String[] KINDS = {"styles", "images", "videos"};
     private static final String[] LABELS = {"Styles", "Images", "Videos"};
@@ -99,16 +104,32 @@ public class MainActivity extends Activity {
     private File archiveDir;
     private File mediaDir;
     private File archiveFile;
+    private SharedPreferences prefs;
     private WebView webView;
     private LinearLayout uiRoot;
+    private LinearLayout optionsPanel;
     private LinearLayout sessionBar;
     private GridLayout grid;
     private TextView statusText;
     private TextView countText;
+    private TextView optionsSummaryText;
+    private TextView scrollValueText;
+    private TextView maxPerTabValueText;
+    private CheckBox autoStartCheck;
+    private CheckBox stylesCheck;
+    private CheckBox imagesCheck;
+    private CheckBox videosCheck;
     private String userAgent;
     private int targetIndex;
     private int scrollStep;
     private int pendingDownloads;
+    private int scrollSteps;
+    private int maxPerTab;
+    private final int[] queuedByTab = new int[KINDS.length];
+    private boolean autoStart;
+    private boolean includeStyles;
+    private boolean includeImages;
+    private boolean includeVideos;
     private boolean crawling;
 
     @Override
@@ -117,11 +138,17 @@ public class MainActivity extends Activity {
         archiveDir = new File(getFilesDir(), "midjourney_archive");
         mediaDir = new File(archiveDir, "media");
         archiveFile = new File(archiveDir, "archive.json");
+        prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        loadOptions();
         loadArchive();
         buildUi();
         configureWebView();
         renderArchive();
-        mainHandler.postDelayed(this::startCrawl, 600);
+        if (autoStart) {
+            mainHandler.postDelayed(this::startCrawl, 600);
+        } else {
+            setStatus("Ready. Auto crawl is off.");
+        }
     }
 
     @Override
@@ -176,19 +203,35 @@ public class MainActivity extends Activity {
         countText.setTextSize(13f);
         titleBox.addView(countText);
 
+        LinearLayout toolbar = new LinearLayout(this);
+        toolbar.setOrientation(LinearLayout.HORIZONTAL);
+        toolbar.setGravity(Gravity.CENTER_VERTICAL);
+        toolbar.setPadding(0, dp(10), 0, 0);
+        uiRoot.addView(toolbar, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+
         Button refreshButton = smallButton("Refresh");
         refreshButton.setOnClickListener(v -> startCrawl());
-        header.addView(refreshButton);
+        toolbar.addView(refreshButton);
+
+        Button optionsButton = smallButton("Options");
+        optionsButton.setOnClickListener(v -> toggleOptions());
+        toolbar.addView(optionsButton);
 
         Button sessionButton = smallButton("Session");
         sessionButton.setOnClickListener(v -> showSession(true));
-        header.addView(sessionButton);
+        toolbar.addView(sessionButton);
 
         statusText = new TextView(this);
         statusText.setTextColor(Color.rgb(210, 216, 225));
         statusText.setTextSize(13f);
         statusText.setPadding(0, dp(10), 0, dp(8));
         uiRoot.addView(statusText);
+
+        optionsPanel = buildOptionsPanel();
+        uiRoot.addView(optionsPanel);
 
         ScrollView scrollView = new ScrollView(this);
         scrollView.setFillViewport(true);
@@ -229,7 +272,277 @@ public class MainActivity extends Activity {
         frame.addView(sessionBar, sessionParams);
 
         setContentView(frame);
-        setStatus("Ready. Crawling starts automatically.");
+        setStatus(autoStart ? "Ready. Crawling starts automatically." : "Ready. Auto crawl is off.");
+    }
+
+    private LinearLayout buildOptionsPanel() {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(10), dp(10), dp(10), dp(10));
+        panel.setBackground(rounded(Color.rgb(24, 29, 38), dp(8)));
+        panel.setVisibility(View.GONE);
+
+        LinearLayout checks = new LinearLayout(this);
+        checks.setOrientation(LinearLayout.VERTICAL);
+        panel.addView(checks);
+
+        autoStartCheck = optionCheck("Auto crawl on launch", autoStart);
+        stylesCheck = optionCheck("Crawl styles", includeStyles);
+        imagesCheck = optionCheck("Crawl images", includeImages);
+        videosCheck = optionCheck("Crawl video thumbnails", includeVideos);
+        checks.addView(autoStartCheck);
+        checks.addView(stylesCheck);
+        checks.addView(imagesCheck);
+        checks.addView(videosCheck);
+
+        View.OnClickListener optionChanged = v -> {
+            syncOptionsFromUi();
+            saveOptions();
+            updateOptionsSummary();
+        };
+        autoStartCheck.setOnClickListener(optionChanged);
+        stylesCheck.setOnClickListener(optionChanged);
+        imagesCheck.setOnClickListener(optionChanged);
+        videosCheck.setOnClickListener(optionChanged);
+
+        panel.addView(numberOptionRow("Scroll steps", () -> changeScrollSteps(-1), () -> changeScrollSteps(1), true));
+        panel.addView(numberOptionRow("Max new per tab", () -> changeMaxPerTab(-10), () -> changeMaxPerTab(10), false));
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        actions.setGravity(Gravity.CENTER_VERTICAL);
+        actions.setPadding(0, dp(8), 0, 0);
+
+        Button crawlButton = smallButton("Crawl now");
+        crawlButton.setOnClickListener(v -> startCrawl());
+        actions.addView(crawlButton);
+
+        Button cleanButton = smallButton("Clean");
+        cleanButton.setOnClickListener(v -> compactArchive());
+        actions.addView(cleanButton);
+
+        Button resetDeletesButton = smallButton("Reset X");
+        resetDeletesButton.setOnClickListener(v -> resetDeletedMemory());
+        actions.addView(resetDeletesButton);
+
+        Button clearButton = smallButton("Delete all");
+        clearButton.setOnClickListener(v -> confirmDeleteAll());
+        actions.addView(clearButton);
+
+        panel.addView(actions);
+
+        optionsSummaryText = new TextView(this);
+        optionsSummaryText.setTextColor(Color.rgb(180, 187, 199));
+        optionsSummaryText.setTextSize(12f);
+        optionsSummaryText.setPadding(0, dp(8), 0, 0);
+        panel.addView(optionsSummaryText);
+
+        updateOptionsSummary();
+        return panel;
+    }
+
+    private LinearLayout numberOptionRow(String label, Runnable minus, Runnable plus, boolean scrollRow) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dp(8), 0, 0);
+
+        TextView labelView = new TextView(this);
+        labelView.setText(label);
+        labelView.setTextColor(Color.rgb(210, 216, 225));
+        labelView.setTextSize(13f);
+        row.addView(labelView, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        Button minusButton = smallButton("-");
+        minusButton.setOnClickListener(v -> minus.run());
+        row.addView(minusButton, new LinearLayout.LayoutParams(dp(42), dp(34)));
+
+        TextView valueView = new TextView(this);
+        valueView.setGravity(Gravity.CENTER);
+        valueView.setTextColor(Color.WHITE);
+        valueView.setTextSize(13f);
+        row.addView(valueView, new LinearLayout.LayoutParams(dp(58), ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        Button plusButton = smallButton("+");
+        plusButton.setOnClickListener(v -> plus.run());
+        row.addView(plusButton, new LinearLayout.LayoutParams(dp(42), dp(34)));
+
+        if (scrollRow) {
+            scrollValueText = valueView;
+        } else {
+            maxPerTabValueText = valueView;
+        }
+        updateNumberLabels();
+        return row;
+    }
+
+    private CheckBox optionCheck(String text, boolean checked) {
+        CheckBox checkBox = new CheckBox(this);
+        checkBox.setText(text);
+        checkBox.setTextColor(Color.rgb(222, 227, 235));
+        checkBox.setTextSize(13f);
+        checkBox.setChecked(checked);
+        checkBox.setButtonTintList(android.content.res.ColorStateList.valueOf(Color.rgb(79, 141, 247)));
+        return checkBox;
+    }
+
+    private void loadOptions() {
+        autoStart = prefs.getBoolean("autoStart", true);
+        includeStyles = prefs.getBoolean("includeStyles", true);
+        includeImages = prefs.getBoolean("includeImages", true);
+        includeVideos = prefs.getBoolean("includeVideos", true);
+        scrollSteps = clamp(prefs.getInt("scrollSteps", DEFAULT_SCROLL_STEPS), 1, 30);
+        maxPerTab = clamp(prefs.getInt("maxPerTab", DEFAULT_MAX_PER_TAB), 10, 300);
+    }
+
+    private void syncOptionsFromUi() {
+        if (autoStartCheck == null) {
+            return;
+        }
+        autoStart = autoStartCheck.isChecked();
+        includeStyles = stylesCheck.isChecked();
+        includeImages = imagesCheck.isChecked();
+        includeVideos = videosCheck.isChecked();
+    }
+
+    private void saveOptions() {
+        prefs.edit()
+                .putBoolean("autoStart", autoStart)
+                .putBoolean("includeStyles", includeStyles)
+                .putBoolean("includeImages", includeImages)
+                .putBoolean("includeVideos", includeVideos)
+                .putInt("scrollSteps", scrollSteps)
+                .putInt("maxPerTab", maxPerTab)
+                .apply();
+    }
+
+    private void updateOptionsSummary() {
+        updateNumberLabels();
+        if (optionsSummaryText == null) {
+            return;
+        }
+        String tabs = "";
+        if (includeStyles) {
+            tabs += "styles ";
+        }
+        if (includeImages) {
+            tabs += "images ";
+        }
+        if (includeVideos) {
+            tabs += "videos ";
+        }
+        if (tabs.length() == 0) {
+            tabs = "none";
+        }
+        optionsSummaryText.setText("Tabs: " + tabs.trim()
+                + "  |  scroll " + scrollSteps
+                + "  |  max " + maxPerTab
+                + "  |  deleted memory " + deletedKeys.size());
+    }
+
+    private void updateNumberLabels() {
+        if (scrollValueText != null) {
+            scrollValueText.setText(String.valueOf(scrollSteps));
+        }
+        if (maxPerTabValueText != null) {
+            maxPerTabValueText.setText(String.valueOf(maxPerTab));
+        }
+    }
+
+    private void changeScrollSteps(int delta) {
+        scrollSteps = clamp(scrollSteps + delta, 1, 30);
+        saveOptions();
+        updateOptionsSummary();
+    }
+
+    private void changeMaxPerTab(int delta) {
+        maxPerTab = clamp(maxPerTab + delta, 10, 300);
+        saveOptions();
+        updateOptionsSummary();
+    }
+
+    private boolean hasEnabledTab() {
+        return includeStyles || includeImages || includeVideos;
+    }
+
+    private boolean isTabEnabled(int index) {
+        if (index == 0) {
+            return includeStyles;
+        }
+        if (index == 1) {
+            return includeImages;
+        }
+        return includeVideos;
+    }
+
+    private int nextEnabledTab(int afterIndex) {
+        int next = afterIndex + 1;
+        while (next < URLS.length && !isTabEnabled(next)) {
+            next++;
+        }
+        return next;
+    }
+
+    private void resetDeletedMemory() {
+        int count = deletedKeys.size();
+        deletedKeys.clear();
+        saveArchive();
+        updateOptionsSummary();
+        setStatus("Reset " + count + " deleted keys. Deleted sources can be crawled again.");
+    }
+
+    private void confirmDeleteAll() {
+        new AlertDialog.Builder(this)
+                .setTitle("Delete all local files?")
+                .setMessage("Saved thumbnails will be removed from this app's private storage. Their source keys stay in delete memory, so they are not re-added until Reset X is used.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Delete", (dialog, which) -> deleteAllLocalArchive())
+                .show();
+    }
+
+    private void deleteAllLocalArchive() {
+        crawling = false;
+        if (webView != null) {
+            webView.stopLoading();
+        }
+        for (ArchiveItem item : new ArrayList<>(items)) {
+            deletedKeys.add(item.key);
+            deleteFileQuietly(new File(item.localPath));
+        }
+        deletedKeys.addAll(downloadingKeys);
+        downloadingKeys.clear();
+        pendingDownloads = 0;
+        items.clear();
+        itemKeys.clear();
+        deleteRecursive(mediaDir);
+        mediaDir.mkdirs();
+        saveArchive();
+        renderArchive();
+        updateOptionsSummary();
+        setStatus("Deleted all saved thumbnails from device storage.");
+    }
+
+    private void compactArchive() {
+        int removed = 0;
+        HashSet<String> seen = new HashSet<>();
+        ArrayList<ArchiveItem> kept = new ArrayList<>();
+        for (ArchiveItem item : items) {
+            File file = new File(item.localPath);
+            if (item.key == null || item.key.length() == 0 || seen.contains(item.key) || !file.exists() || file.length() == 0) {
+                deleteFileQuietly(file);
+                removed++;
+                continue;
+            }
+            seen.add(item.key);
+            kept.add(item);
+        }
+        items.clear();
+        items.addAll(kept);
+        itemKeys.clear();
+        itemKeys.addAll(seen);
+        saveArchive();
+        renderArchive();
+        setStatus("Cleaned archive. Removed " + removed + " missing or duplicate entries.");
     }
 
     private Button smallButton(String text) {
@@ -299,13 +612,29 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void toggleOptions() {
+        if (optionsPanel == null) {
+            return;
+        }
+        optionsPanel.setVisibility(optionsPanel.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE);
+    }
+
     private void startCrawl() {
         if (crawling) {
             setStatus("Crawl already running.");
             return;
         }
+        syncOptionsFromUi();
+        saveOptions();
+        if (!hasEnabledTab()) {
+            setStatus("Turn on at least one crawl tab in Options.");
+            return;
+        }
         crawling = true;
-        targetIndex = 0;
+        for (int i = 0; i < queuedByTab.length; i++) {
+            queuedByTab[i] = 0;
+        }
+        targetIndex = nextEnabledTab(-1);
         scrollStep = 0;
         setStatus("Starting device crawl...");
         loadTarget();
@@ -315,6 +644,7 @@ public class MainActivity extends Activity {
         if (!crawling) {
             return;
         }
+        targetIndex = nextEnabledTab(targetIndex - 1);
         if (targetIndex >= URLS.length) {
             crawling = false;
             saveArchive();
@@ -332,16 +662,16 @@ public class MainActivity extends Activity {
 
         extractVisibleUrls();
 
-        if (scrollStep < SCROLL_STEPS) {
+        if (scrollStep < scrollSteps) {
             scrollStep++;
             webView.evaluateJavascript(SCROLL_JS, value -> {
-                setStatus("Crawling " + LABELS[targetIndex] + " " + scrollStep + "/" + SCROLL_STEPS);
+                setStatus("Crawling " + LABELS[targetIndex] + " " + scrollStep + "/" + scrollSteps);
                 mainHandler.postDelayed(MainActivity.this::crawlStep, 1300);
             });
             return;
         }
 
-        targetIndex++;
+        targetIndex = nextEnabledTab(targetIndex);
         scrollStep = 0;
         mainHandler.postDelayed(this::loadTarget, 700);
     }
@@ -360,13 +690,16 @@ public class MainActivity extends Activity {
 
                 if (urls != null) {
                     for (int i = 0; i < urls.length(); i++) {
+                        if (queuedByTab[kindIndex] >= maxPerTab) {
+                            break;
+                        }
                         String rawUrl = urls.optString(i, "");
                         String sourceUrl = cleanSourceUrl(rawUrl);
                         if (sourceUrl == null) {
                             continue;
                         }
                         String key = keyForUrl(sourceUrl);
-                        if (!reserveDownloadKey(key)) {
+                        if (!reserveDownloadKey(key, kindIndex)) {
                             continue;
                         }
                         queued++;
@@ -385,14 +718,18 @@ public class MainActivity extends Activity {
         });
     }
 
-    private boolean reserveDownloadKey(String key) {
+    private boolean reserveDownloadKey(String key, int kindIndex) {
         if (key == null || key.length() == 0) {
+            return false;
+        }
+        if (queuedByTab[kindIndex] >= maxPerTab) {
             return false;
         }
         if (itemKeys.contains(key) || deletedKeys.contains(key) || downloadingKeys.contains(key)) {
             return false;
         }
         downloadingKeys.add(key);
+        queuedByTab[kindIndex]++;
         pendingDownloads++;
         updateCounts();
         return true;
@@ -624,6 +961,7 @@ public class MainActivity extends Activity {
             }
         }
         countText.setText(items.size() + " saved  |  images " + images + "  styles " + styles + "  videos " + videos
+                + "  |  " + formatBytes(directorySize(mediaDir))
                 + "  |  pending " + pendingDownloads);
     }
 
@@ -819,6 +1157,54 @@ public class MainActivity extends Activity {
         if (file != null && file.exists()) {
             file.delete();
         }
+    }
+
+    private void deleteRecursive(File file) {
+        if (file == null || !file.exists()) {
+            return;
+        }
+        if (file.isDirectory()) {
+            File[] children = file.listFiles();
+            if (children != null) {
+                for (File child : children) {
+                    deleteRecursive(child);
+                }
+            }
+        }
+        file.delete();
+    }
+
+    private long directorySize(File file) {
+        if (file == null || !file.exists()) {
+            return 0L;
+        }
+        if (file.isFile()) {
+            return file.length();
+        }
+        long total = 0L;
+        File[] children = file.listFiles();
+        if (children != null) {
+            for (File child : children) {
+                total += directorySize(child);
+            }
+        }
+        return total;
+    }
+
+    private String formatBytes(long bytes) {
+        if (bytes < 1024) {
+            return bytes + " B";
+        }
+        double kb = bytes / 1024.0;
+        if (kb < 1024) {
+            return String.format(Locale.US, "%.1f KB", kb);
+        }
+        double mb = kb / 1024.0;
+        return String.format(Locale.US, "%.1f MB", mb);
+    }
+
+    private int clamp(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
     }
 
     private GradientDrawable rounded(int color, int radius) {
