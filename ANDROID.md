@@ -4,12 +4,15 @@ This repository includes a native Android app under `app/`.
 
 Behavior:
 
-- Starts a Midjourney Explore crawl when the app opens.
+- Opens to the saved-image gallery first. Crawling starts only when `Crawl` is
+  tapped or when the user turns automatic crawl back on.
 - Includes an in-app `Options` panel for crawl control.
 - Shows `Images`, `Styles`, and `Videos` as three visible tappable tabs.
 - Shows saved items under `TOP DAY` date sections, newest date first.
 - The `Explorer` button opens the currently selected Midjourney tab in the
   visible WebView session.
+- The Explorer screen has `Save View` for saving the visible page as an image
+  when URL extraction fails, plus `Crawl` for starting from that rendered session.
 - The app scans `Pictures/MJLocalArchive` on launch, on tab change, and through
   the `Import` option, so gallery files can reappear even if the app archive was
   empty.
@@ -45,6 +48,7 @@ Options:
 - Clear the WebView cache before a crawl when the page appears stale.
 - Tune page-load wait and scroll-pause wait times.
 - Start a crawl manually.
+- Save the currently visible Explorer screen.
 - Import existing images from the Gallery `MJLocalArchive` album.
 - Clean missing or duplicate archive entries.
 - Reset delete memory so previously deleted sources can be crawled again.
@@ -53,7 +57,7 @@ Options:
 
 The app does not include challenge-solving or anti-bot bypass code. If Midjourney,
 Cloudflare, or login blocks the embedded WebView, the app keeps the existing local
-archive unchanged and shows a status message. Use the `Session` button to open the
+archive unchanged and shows a status message. Use the `Explorer` button to open the
 same WebView session and sign in normally if needed.
 
 ## Build APK

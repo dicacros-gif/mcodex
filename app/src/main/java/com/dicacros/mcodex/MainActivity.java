@@ -1,5 +1,6 @@
 package com.dicacros.mcodex;
 
+import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.ContentUris;
@@ -8,6 +9,8 @@ import android.content.ContentValues;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
@@ -65,7 +68,6 @@ import java.util.Date;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
-import android.database.Cursor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -74,6 +76,8 @@ public class MainActivity extends Activity {
     private static final int DEFAULT_SCROLL_STEPS = 10;
     private static final int DEFAULT_MAX_PER_TAB = 80;
     private static final int MAX_ASSET_BYTES = 25 * 1024 * 1024;
+    private static final int GALLERY_PERMISSION_REQUEST = 71;
+    private static final String MAIN_GALLERY_DEFAULT_KEY = "mainGalleryDefaultV3";
     private static final String[] KINDS = {"styles", "images", "videos"};
     private static final String[] LABELS = {"Styles", "Images", "Videos"};
     private static final int[] DISPLAY_KIND_ORDER = {1, 0, 2};
@@ -91,12 +95,14 @@ public class MainActivity extends Activity {
 
     private static final String EXTRACT_JS =
             "(function(){"
+                    + "const isVideo=/video_top/.test(location.href);"
                     + "const urls=new Set();"
                     + "const addOne=function(raw){try{"
                     + "if(!raw)return;"
                     + "raw=String(raw).trim();"
                     + "if(!raw)return;"
-                    + "if(raw.indexOf(',')>=0){raw.split(',').forEach(function(part){addOne(part.trim().split(/\\s+/)[0]);});return;}"
+                    + "raw=raw.replace(/&amp;/g,'&').replace(/\\\\\\//g,'/');"
+                    + "if(raw.indexOf(',')>=0){raw.split(',').forEach(function(part){addOne(part.trim().split(/\\s+/)[0]);});}"
                     + "raw=raw.replace(/^url\\([\"']?/,'').replace(/[\"']?\\)$/,'');"
                     + "const u=new URL(raw,location.href);"
                     + "if(!/^https?:$/.test(u.protocol))return;"
@@ -105,11 +111,25 @@ public class MainActivity extends Activity {
                     + "if(!/\\.(webp|png|jpe?g)(\\?|#|$)/i.test(href))return;"
                     + "urls.add(href);"
                     + "}catch(e){}};"
+                    + "const addUuid=function(raw){try{"
+                    + "const text=String(raw||'');"
+                    + "const matches=text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ig)||[];"
+                    + "matches.forEach(function(id){"
+                    + "if(isVideo){addOne('https://cdn.midjourney.com/video/'+id+'/0_640_N.webp');}"
+                    + "else{[0,1,2,3].forEach(function(n){addOne('https://cdn.midjourney.com/'+id+'/0_'+n+'_384_N.webp');addOne('https://cdn.midjourney.com/'+id+'/0_'+n+'.webp');});}"
+                    + "});"
+                    + "}catch(e){}};"
                     + "document.querySelectorAll('img').forEach(function(img){addOne(img.currentSrc||img.src);addOne(img.srcset);addOne(img.getAttribute('src'));addOne(img.getAttribute('data-src'));});"
                     + "document.querySelectorAll('source').forEach(function(source){addOne(source.srcset);addOne(source.src);});"
                     + "document.querySelectorAll('video').forEach(function(video){addOne(video.poster);addOne(video.currentSrc||video.src);});"
+                    + "document.querySelectorAll('a').forEach(function(a){addOne(a.href);addUuid(a.href);});"
+                    + "document.querySelectorAll('*').forEach(function(el){try{Array.from(el.getAttributeNames()).forEach(function(name){const value=el.getAttribute(name);addOne(value);addUuid(value);});}catch(e){}});"
                     + "document.querySelectorAll('[style]').forEach(function(el){const bg=getComputedStyle(el).backgroundImage;if(bg&&bg!=='none'){addOne(bg);}});"
-                    + "return {urls:Array.from(urls),title:document.title||'',href:location.href,text:(document.body&&document.body.innerText?document.body.innerText.slice(0,800):'')};"
+                    + "try{performance.getEntriesByType('resource').forEach(function(e){addOne(e.name);addUuid(e.name);});}catch(e){}"
+                    + "const html=document.documentElement?document.documentElement.innerHTML:'';"
+                    + "addUuid(html);"
+                    + "(html.match(/https?:\\\\?\\/\\\\?\\/[^\\\"'<>\\s]+/g)||[]).forEach(function(u){addOne(u);});"
+                    + "return {urls:Array.from(urls),title:document.title||'',href:location.href,text:(document.body&&document.body.innerText?document.body.innerText.slice(0,1200):'')};"
                     + "})();";
 
     private static final String CLEAN_PAGE_JS =
@@ -204,15 +224,17 @@ public class MainActivity extends Activity {
         archiveFile = new File(archiveDir, "archive.json");
         prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
         loadOptions();
+        migrateMainGalleryDefault();
         loadArchive();
-        importGalleryFolder();
         buildUi();
         configureWebView();
+        ensureGalleryReadPermission();
+        importGalleryFolder();
         renderArchive();
         if (autoStart) {
             mainHandler.postDelayed(this::startCrawl, 600);
         } else {
-            setStatus("Ready. Auto crawl is off.");
+            setStatus("Saved gallery is ready. Choose a tab, then use Explorer or Crawl.");
         }
     }
 
@@ -223,6 +245,52 @@ public class MainActivity extends Activity {
             webView.destroy();
         }
         super.onDestroy();
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == GALLERY_PERMISSION_REQUEST) {
+            int count = importGalleryFolder();
+            renderArchive();
+            if (hasGalleryReadPermission()) {
+                setStatus("Gallery permission ready. Imported " + count + " saved images.");
+            } else {
+                setStatus("Gallery permission was not granted. New captures still save inside the app album.");
+            }
+        }
+    }
+
+    private void ensureGalleryReadPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || hasGalleryReadPermission()) {
+            return;
+        }
+        requestPermissions(galleryReadPermissions(), GALLERY_PERMISSION_REQUEST);
+    }
+
+    private boolean hasGalleryReadPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            return true;
+        }
+        for (String permission : galleryReadPermissions()) {
+            if (checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String[] galleryReadPermissions() {
+        if (Build.VERSION.SDK_INT >= 34) {
+            return new String[]{
+                    Manifest.permission.READ_MEDIA_IMAGES,
+                    Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+            };
+        }
+        if (Build.VERSION.SDK_INT >= 33) {
+            return new String[]{Manifest.permission.READ_MEDIA_IMAGES};
+        }
+        return new String[]{Manifest.permission.READ_EXTERNAL_STORAGE};
     }
 
     private void buildUi() {
@@ -328,6 +396,12 @@ public class MainActivity extends Activity {
         Button backButton = smallButton("Back");
         backButton.setOnClickListener(v -> showSession(false));
         sessionBar.addView(backButton);
+        Button saveViewButton = smallButton("Save View");
+        saveViewButton.setOnClickListener(v -> saveVisibleSession());
+        sessionBar.addView(saveViewButton);
+        Button sessionCrawlButton = smallButton("Crawl");
+        sessionCrawlButton.setOnClickListener(v -> startCrawl());
+        sessionBar.addView(sessionCrawlButton);
         TextView sessionText = new TextView(this);
         sessionText.setText("Midjourney Explorer");
         sessionText.setTextColor(Color.WHITE);
@@ -441,6 +515,7 @@ public class MainActivity extends Activity {
 
         Button importButton = smallButton("Import");
         importButton.setOnClickListener(v -> {
+            ensureGalleryReadPermission();
             int count = importGalleryFolder();
             renderArchive();
             setStatus("Imported " + count + " images from Gallery/MJLocalArchive.");
@@ -559,7 +634,7 @@ public class MainActivity extends Activity {
     }
 
     private void loadOptions() {
-        autoStart = prefs.getBoolean("autoStart", true);
+        autoStart = prefs.getBoolean("autoStart", false);
         downloadUrls = prefs.getBoolean("downloadUrls", true);
         captureScreens = prefs.getBoolean("captureScreens", true);
         captureOnLoad = prefs.getBoolean("captureOnLoad", true);
@@ -581,6 +656,17 @@ public class MainActivity extends Activity {
         if (!"images".equals(activeKind) && !"styles".equals(activeKind) && !"videos".equals(activeKind)) {
             activeKind = "images";
         }
+    }
+
+    private void migrateMainGalleryDefault() {
+        if (prefs.getBoolean(MAIN_GALLERY_DEFAULT_KEY, false)) {
+            return;
+        }
+        autoStart = false;
+        prefs.edit()
+                .putBoolean("autoStart", false)
+                .putBoolean(MAIN_GALLERY_DEFAULT_KEY, true)
+                .apply();
     }
 
     private void syncOptionsFromUi() {
@@ -768,14 +854,23 @@ public class MainActivity extends Activity {
     private void compactArchive() {
         int removed = 0;
         HashSet<String> seen = new HashSet<>();
+        HashSet<String> seenRefs = new HashSet<>();
         ArrayList<ArchiveItem> kept = new ArrayList<>();
         for (ArchiveItem item : items) {
-            if (item.key == null || item.key.length() == 0 || seen.contains(item.key) || !storedImageExists(item)) {
+            String ref = storedReference(item);
+            if (item.key == null || item.key.length() == 0 || seen.contains(item.key) || (ref.length() > 0 && seenRefs.contains(ref))) {
+                removed++;
+                continue;
+            }
+            if (!storedImageExists(item) && !isPermissionPendingMediaItem(item)) {
                 deleteStoredImage(item);
                 removed++;
                 continue;
             }
             seen.add(item.key);
+            if (ref.length() > 0) {
+                seenRefs.add(ref);
+            }
             kept.add(item);
         }
         items.clear();
@@ -785,6 +880,19 @@ public class MainActivity extends Activity {
         saveArchive();
         renderArchive();
         setStatus("Cleaned archive. Removed " + removed + " missing or duplicate entries.");
+    }
+
+    private String storedReference(ArchiveItem item) {
+        if (item == null) {
+            return "";
+        }
+        if (item.localUri != null && item.localUri.length() > 0) {
+            return "uri:" + item.localUri;
+        }
+        if (item.localPath != null && item.localPath.length() > 0) {
+            return "path:" + item.localPath;
+        }
+        return "";
     }
 
     private Button smallButton(String text) {
@@ -813,9 +921,15 @@ public class MainActivity extends Activity {
         settings.setLoadsImagesAutomatically(true);
         settings.setBlockNetworkImage(false);
         settings.setMediaPlaybackRequiresUserGesture(false);
+        settings.setAllowFileAccess(true);
+        settings.setAllowContentAccess(true);
+        settings.setCacheMode(WebSettings.LOAD_DEFAULT);
         settings.setLoadWithOverviewMode(false);
         settings.setUseWideViewPort(true);
-        userAgent = WebSettings.getDefaultUserAgent(this);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+        }
+        userAgent = "Mozilla/5.0 (Linux; Android 14; SM-S928N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36";
         settings.setUserAgentString(userAgent);
 
         CookieManager.getInstance().setAcceptCookie(true);
@@ -869,7 +983,29 @@ public class MainActivity extends Activity {
         }
         showSession(true);
         setStatus("Opening " + LABELS[index] + " Explorer...");
+        webView.stopLoading();
+        webView.clearHistory();
+        if (clearCacheBeforeCrawl) {
+            webView.clearCache(false);
+        }
         webView.loadUrl(URLS[index]);
+    }
+
+    private void saveVisibleSession() {
+        syncOptionsFromUi();
+        saveOptions();
+        int index = indexForKind(activeKind);
+        if (index < 0) {
+            index = 1;
+        }
+        queuedByTab[index] = 0;
+        setStatus("Saving the visible " + LABELS[index] + " Explorer screen...");
+        sessionBar.setVisibility(View.GONE);
+        int finalIndex = index;
+        mainHandler.postDelayed(() -> {
+            captureVisiblePage(KINDS[finalIndex], LABELS[finalIndex], finalIndex);
+            mainHandler.postDelayed(() -> sessionBar.setVisibility(View.VISIBLE), 900);
+        }, 120);
     }
 
     private void showCrawlerWebView() {
@@ -946,12 +1082,14 @@ public class MainActivity extends Activity {
         targetIndex = nextEnabledTab(targetIndex - 1);
         if (targetIndex >= URLS.length) {
             crawling = false;
+            importGalleryFolder();
             saveArchive();
             showGalleryView();
             setStatus("Crawl complete. " + items.size() + " saved, " + pendingDownloads + " downloads still finishing.");
             return;
         }
         setStatus("Opening " + LABELS[targetIndex] + " tab...");
+        webView.stopLoading();
         webView.loadUrl(URLS[targetIndex]);
     }
 
@@ -1572,15 +1710,14 @@ public class MainActivity extends Activity {
                 if (item == null || item.key == null || deletedKeys.contains(item.key)) {
                     continue;
                 }
-                if (!storedImageExists(item)) {
+                if (!storedImageExists(item) && !isPermissionPendingMediaItem(item)) {
                     continue;
                 }
                 if (item.savedAt <= 0L) {
                     File file = item.localPath == null || item.localPath.length() == 0 ? null : new File(item.localPath);
                     item.savedAt = file != null && file.lastModified() > 0L ? file.lastModified() : System.currentTimeMillis();
                 }
-                if (itemKeys.contains(item.key)) {
-                    deleteStoredImage(item);
+                if (itemKeys.contains(item.key) || hasStoredReference(item.localPath, item.localUri)) {
                     continue;
                 }
                 itemKeys.add(item.key);
@@ -1658,7 +1795,7 @@ public class MainActivity extends Activity {
     }
 
     private void addImportedItem(String kind, String key, String name, String path, String uri, long savedAt) {
-        if (key == null || itemKeys.contains(key) || deletedKeys.contains(key)) {
+        if (key == null || itemKeys.contains(key) || deletedKeys.contains(key) || hasStoredReference(path, uri)) {
             return;
         }
         ArchiveItem item = new ArchiveItem();
@@ -1674,6 +1811,18 @@ public class MainActivity extends Activity {
         }
         itemKeys.add(item.key);
         items.add(item);
+    }
+
+    private boolean hasStoredReference(String path, String uri) {
+        for (ArchiveItem item : items) {
+            if (uri != null && uri.length() > 0 && uri.equals(item.localUri)) {
+                return true;
+            }
+            if (path != null && path.length() > 0 && path.equals(item.localPath)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private String kindFromName(String name) {
@@ -1855,6 +2004,13 @@ public class MainActivity extends Activity {
         } catch (Exception e) {
             return false;
         }
+    }
+
+    private boolean isPermissionPendingMediaItem(ArchiveItem item) {
+        return item != null
+                && item.localUri != null
+                && item.localUri.startsWith("content://")
+                && !hasGalleryReadPermission();
     }
 
     private void deleteStoredImage(ArchiveItem item) {
