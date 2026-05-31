@@ -4,8 +4,8 @@ This repository includes a native Android app under `app/`.
 
 Behavior:
 
-- Uses an `MJ` launcher icon so the installed package is recognizable as the
-  Midjourney archive app.
+- Uses the `Mcodex` app name and an `MJ` launcher icon so the installed package
+  is recognizable as the Midjourney archive app.
 - Opens to the saved-image `Gallery` tab first, showing every crawled,
   captured, and imported item together. Crawling starts only when `Crawl` is
   tapped or when the user turns automatic crawl back on.
@@ -21,6 +21,8 @@ Behavior:
   selected-item deletion.
 - The `Explorer` button opens the currently selected Midjourney tab in the
   visible WebView session.
+- The WebView session has `Images`, `Styles`, and `Videos` buttons that directly
+  open the three public Explore URLs.
 - The Explorer screen has `Save View` for saving the visible page as an image
   when URL extraction fails, plus `Crawl` for starting from that rendered session.
 - The Options panel has `MJ App` and `Browser` fallbacks. They open the selected
@@ -34,6 +36,8 @@ Behavior:
 - Automatically falls back to visible-page capture when URL crawling finds no
   public thumbnails, when page data is unreadable, or when the public page does
   not expose image URLs.
+- Saves image resources observed by the WebView itself, so loaded public
+  thumbnails can be downloaded even when the DOM crawler misses them.
 - Crawls these tabs through the device WebView session:
   - `https://www.midjourney.com/explore?tab=styles_top`
   - `https://www.midjourney.com/explore?tab=top`
@@ -66,6 +70,9 @@ Options:
 - Keep `Public no-login WebView` on for the public Explore feed, or turn it off
   only when deliberately using a signed-in WebView session.
 - Reset Web clears WebView cookies, local storage, history, SSL state, and cache.
+- Automatically retries public Explore with multiple WebView strategies: system
+  WebView, mobile Chrome user agent, desktop Chrome user agent, and a session
+  fallback.
 - Tune page-load wait and scroll-pause wait times.
 - Start a crawl manually.
 - Save the currently visible Explorer screen.
@@ -78,6 +85,8 @@ Options:
 - Reset delete memory so previously deleted sources can be crawled again.
 - Delete all saved thumbnails that the app has recorded.
 - Tap an image to open a full-screen preview with pinch zoom and drag.
+- Android Back goes back inside the WebView, closes preview/options/selection
+  first, and only exits when already back at the main gallery.
 
 The app does not include challenge-solving or anti-bot bypass code. Public
 no-login mode is the default path for the public Explore feed. If Midjourney or

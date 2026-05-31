@@ -35,6 +35,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.CookieManager;
 import android.webkit.WebChromeClient;
+import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebStorage;
 import android.webkit.WebView;
@@ -61,6 +62,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.net.URLDecoder;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.text.SimpleDateFormat;
@@ -80,6 +82,7 @@ public class MainActivity extends Activity {
     private static final int DEFAULT_MAX_PER_TAB = 80;
     private static final int MAX_ASSET_BYTES = 25 * 1024 * 1024;
     private static final int GALLERY_PERMISSION_REQUEST = 71;
+    private static final int WEB_STRATEGY_COUNT = 4;
     private static final String MAIN_GALLERY_DEFAULT_KEY = "mainGalleryDefaultV3";
     private static final String MAIN_GALLERY_TAB_KEY = "mainGalleryTabV1";
     private static final String KIND_ALL = "all";
@@ -152,6 +155,17 @@ public class MainActivity extends Activity {
                     + "return true;"
                     + "})();";
 
+    private static final String PAGE_STATE_JS =
+            "(function(){"
+                    + "const imgs=Array.from(document.images||[]);"
+                    + "const visible=imgs.filter(function(img){const r=img.getBoundingClientRect();const s=getComputedStyle(img);return r.width>24&&r.height>24&&s.display!=='none'&&s.visibility!=='hidden';}).length;"
+                    + "let resources=0;"
+                    + "try{resources=performance.getEntriesByType('resource').filter(function(e){return /\\.(webp|png|jpe?g)(\\?|#|$)/i.test(e.name)&&/(midjourney|discordapp|discord|cloudfront)/i.test(e.name);}).length;}catch(e){}"
+                    + "const text=(document.body&&document.body.innerText?document.body.innerText:'');"
+                    + "const html=(document.documentElement&&document.documentElement.innerHTML?document.documentElement.innerHTML:'');"
+                    + "return {title:document.title||'',href:location.href,images:imgs.length,visibleImages:visible,resources:resources,text:text.slice(0,1000),textLength:text.length,htmlLength:html.length};"
+                    + "})();";
+
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService downloadExecutor = Executors.newFixedThreadPool(3);
     private final ArrayList<ArchiveItem> items = new ArrayList<>();
@@ -204,6 +218,9 @@ public class MainActivity extends Activity {
     private int maxPerTab;
     private int pageWaitMs;
     private int scrollPauseMs;
+    private int currentWebKindIndex = -1;
+    private int webStrategyIndex;
+    private int webLoadSerial;
     private final int[] queuedByTab = new int[KINDS.length];
     private final Button[] kindTabButtons = new Button[KINDS.length];
     private Button galleryTabButton;
@@ -229,6 +246,7 @@ public class MainActivity extends Activity {
     private long externalSessionStartedAt;
     private boolean pendingExternalImport;
     private boolean selectionMode;
+    private boolean currentWebLoadIsCrawl;
     private ArchiveItem previewItem;
 
     @Override
@@ -263,6 +281,31 @@ public class MainActivity extends Activity {
             webView.destroy();
         }
         super.onDestroy();
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (previewOverlay != null && previewOverlay.getVisibility() == View.VISIBLE) {
+            hidePreview();
+            return;
+        }
+        if (sessionBar != null && sessionBar.getVisibility() == View.VISIBLE) {
+            if (webView != null && webView.canGoBack()) {
+                webView.goBack();
+            } else {
+                showSession(false);
+            }
+            return;
+        }
+        if (optionsPanel != null && optionsPanel.getVisibility() == View.VISIBLE) {
+            optionsPanel.setVisibility(View.GONE);
+            return;
+        }
+        if (selectionMode) {
+            clearSelectionMode();
+            return;
+        }
+        super.onBackPressed();
     }
 
     @Override
@@ -355,7 +398,7 @@ public class MainActivity extends Activity {
         header.addView(titleBox, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
         TextView title = new TextView(this);
-        title.setText("MJ Local Archive");
+        title.setText("Mcodex");
         title.setTextColor(Color.WHITE);
         title.setTextSize(22f);
         title.setTypeface(Typeface.DEFAULT_BOLD);
@@ -439,6 +482,15 @@ public class MainActivity extends Activity {
         Button sessionCrawlButton = smallButton("Crawl");
         sessionCrawlButton.setOnClickListener(v -> startCrawl());
         sessionBar.addView(sessionCrawlButton);
+        Button sessionImagesButton = smallButton("Images");
+        sessionImagesButton.setOnClickListener(v -> openExplorerIndex(1));
+        sessionBar.addView(sessionImagesButton);
+        Button sessionStylesButton = smallButton("Styles");
+        sessionStylesButton.setOnClickListener(v -> openExplorerIndex(0));
+        sessionBar.addView(sessionStylesButton);
+        Button sessionVideosButton = smallButton("Videos");
+        sessionVideosButton.setOnClickListener(v -> openExplorerIndex(2));
+        sessionBar.addView(sessionVideosButton);
         TextView sessionText = new TextView(this);
         sessionText.setText("Midjourney Explorer");
         sessionText.setTextColor(Color.WHITE);
@@ -1212,6 +1264,7 @@ public class MainActivity extends Activity {
     private void configureWebView() {
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
+        settings.setJavaScriptCanOpenWindowsAutomatically(true);
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
         settings.setLoadsImagesAutomatically(true);
@@ -1221,9 +1274,14 @@ public class MainActivity extends Activity {
         settings.setAllowContentAccess(true);
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
         settings.setLoadWithOverviewMode(false);
+        settings.setTextZoom(100);
+        settings.setSupportMultipleWindows(false);
         settings.setUseWideViewPort(true);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            settings.setOffscreenPreRaster(true);
         }
         userAgent = WebSettings.getDefaultUserAgent(this);
         settings.setUserAgentString(userAgent);
@@ -1238,18 +1296,45 @@ public class MainActivity extends Activity {
         webView.setWebChromeClient(new WebChromeClient());
         webView.setWebViewClient(new WebViewClient() {
             @Override
+            public android.webkit.WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                if (request != null && request.getUrl() != null) {
+                    maybeSaveWebResource(request.getUrl().toString());
+                }
+                return super.shouldInterceptRequest(view, request);
+            }
+
+            @Override
             public void onPageFinished(WebView view, String url) {
-                if (!crawling || targetIndex >= URLS.length) {
+                int kindIndex = currentWebKindIndex;
+                if (kindIndex < 0 || kindIndex >= URLS.length) {
                     return;
                 }
-                setStatus("Loaded " + LABELS[targetIndex] + ". Reading visible thumbnails...");
-                scrollStep = 0;
-                mainHandler.postDelayed(() -> {
-                    if (captureScreens && captureOnLoad) {
-                        captureVisiblePage(KINDS[targetIndex], LABELS[targetIndex], targetIndex);
-                    }
-                    mainHandler.postDelayed(MainActivity.this::crawlStep, 350);
-                }, pageWaitMs);
+                int serial = webLoadSerial;
+                mainHandler.postDelayed(() -> verifyLoadedPage(kindIndex, currentWebLoadIsCrawl, serial), pageWaitMs);
+            }
+        });
+    }
+
+    private void maybeSaveWebResource(String rawUrl) {
+        if (rawUrl == null || currentWebKindIndex < 0 || currentWebKindIndex >= KINDS.length) {
+            return;
+        }
+        String lowered = rawUrl.toLowerCase(Locale.US);
+        if (!(lowered.contains("midjourney") || lowered.contains("discord") || lowered.contains("cloudfront"))) {
+            return;
+        }
+        mainHandler.post(() -> {
+            int kindIndex = currentWebKindIndex;
+            if (kindIndex < 0 || kindIndex >= KINDS.length) {
+                return;
+            }
+            String sourceUrl = cleanSourceUrl(rawUrl);
+            if (sourceUrl == null) {
+                return;
+            }
+            String key = keyForUrl(sourceUrl);
+            if (reserveDownloadKey(key, kindIndex)) {
+                submitDownload(KINDS[kindIndex], sourceUrl, key);
             }
         });
     }
@@ -1277,6 +1362,17 @@ public class MainActivity extends Activity {
         if (index < 0) {
             index = 1;
         }
+        openExplorerIndex(index);
+    }
+
+    private void openExplorerIndex(int index) {
+        if (index < 0 || index >= URLS.length) {
+            index = 1;
+        }
+        activeKind = KINDS[index];
+        saveOptions();
+        updateKindTabs();
+        queuedByTab[index] = 0;
         showSession(true);
         setStatus("Opening " + LABELS[index] + " Explorer...");
         webView.stopLoading();
@@ -1285,7 +1381,108 @@ public class MainActivity extends Activity {
             webView.clearCache(false);
         }
         int finalIndex = index;
-        prepareWebSessionForMidjourney(() -> webView.loadUrl(URLS[finalIndex]));
+        prepareWebSessionForMidjourney(() -> loadMidjourneyTab(finalIndex, false, true));
+    }
+
+    private void loadMidjourneyTab(int kindIndex, boolean forCrawl, boolean resetStrategy) {
+        if (kindIndex < 0 || kindIndex >= URLS.length) {
+            return;
+        }
+        if (resetStrategy) {
+            webStrategyIndex = 0;
+        }
+        currentWebKindIndex = kindIndex;
+        currentWebLoadIsCrawl = forCrawl;
+        int serial = ++webLoadSerial;
+        applyWebStrategy();
+        setStatus("Opening " + LABELS[kindIndex] + " public Explore (" + webStrategyName() + ")...");
+        webView.stopLoading();
+        webView.loadUrl(URLS[kindIndex]);
+    }
+
+    private void applyWebStrategy() {
+        WebSettings settings = webView.getSettings();
+        if (webStrategyIndex == 1) {
+            userAgent = "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36";
+        } else if (webStrategyIndex == 2) {
+            userAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
+        } else {
+            userAgent = WebSettings.getDefaultUserAgent(this);
+        }
+        settings.setUserAgentString(userAgent);
+        if (webStrategyIndex == 3) {
+            settings.setLoadWithOverviewMode(true);
+            settings.setUseWideViewPort(true);
+        } else {
+            settings.setLoadWithOverviewMode(false);
+            settings.setUseWideViewPort(true);
+        }
+    }
+
+    private String webStrategyName() {
+        if (webStrategyIndex == 1) {
+            return "mobile Chrome";
+        }
+        if (webStrategyIndex == 2) {
+            return "desktop Chrome";
+        }
+        if (webStrategyIndex == 3) {
+            return "session fallback";
+        }
+        return "system WebView";
+    }
+
+    private void verifyLoadedPage(int kindIndex, boolean forCrawl, int serial) {
+        if (serial != webLoadSerial || kindIndex != currentWebKindIndex) {
+            return;
+        }
+        webView.evaluateJavascript(PAGE_STATE_JS, result -> {
+            if (serial != webLoadSerial || kindIndex != currentWebKindIndex) {
+                return;
+            }
+            boolean ready = false;
+            boolean blocked = false;
+            try {
+                JSONObject payload = new JSONObject(result);
+                String title = payload.optString("title", "");
+                String text = payload.optString("text", "");
+                int visibleImages = payload.optInt("visibleImages", 0);
+                int resources = payload.optInt("resources", 0);
+                int textLength = payload.optInt("textLength", 0);
+                int htmlLength = payload.optInt("htmlLength", 0);
+                blocked = looksBlocked(title, text);
+                ready = !blocked && (visibleImages > 0 || resources > 0 || htmlLength > 1500 || textLength > 80);
+            } catch (Exception ignored) {
+            }
+
+            if (!ready && webStrategyIndex < WEB_STRATEGY_COUNT - 1) {
+                webStrategyIndex++;
+                if (publicNoLoginMode && webStrategyIndex < 3) {
+                    clearWebSessionData(false, () -> loadMidjourneyTab(kindIndex, forCrawl, false));
+                } else {
+                    loadMidjourneyTab(kindIndex, forCrawl, false);
+                }
+                return;
+            }
+
+            if (forCrawl && crawling && targetIndex == kindIndex) {
+                setStatus((ready ? "Loaded " : "Fallback loading ") + LABELS[kindIndex] + ". Reading and saving...");
+                scrollStep = 0;
+                if (captureScreens && (captureOnLoad || !ready || autoCaptureFallback)) {
+                    captureVisiblePage(KINDS[kindIndex], LABELS[kindIndex], kindIndex);
+                }
+                mainHandler.postDelayed(MainActivity.this::crawlStep, 350);
+            } else {
+                if (ready) {
+                    setStatus(LABELS[kindIndex] + " public Explore loaded. Image requests are saved automatically; use Save View for capture.");
+                } else if (captureScreens) {
+                    captureVisiblePage(KINDS[kindIndex], LABELS[kindIndex], kindIndex);
+                    setStatus(LABELS[kindIndex] + " still looked blank, so the visible WebView was captured.");
+                } else {
+                    setStatus(LABELS[kindIndex] + " did not render. Turn on capture options or use Browser/MJ App fallback.");
+                }
+            }
+        });
     }
 
     private void resetPublicWebSession() {
@@ -1550,7 +1747,7 @@ public class MainActivity extends Activity {
         if (clearCacheBeforeCrawl) {
             webView.clearCache(false);
         }
-        webView.loadUrl(URLS[targetIndex]);
+        loadMidjourneyTab(targetIndex, true, true);
     }
 
     private void crawlStep() {
@@ -2543,6 +2740,10 @@ public class MainActivity extends Activity {
             return null;
         }
         try {
+            String extracted = extractImageUrlParameter(trimmed);
+            if (extracted != null) {
+                trimmed = extracted;
+            }
             URL url = new URL(trimmed);
             String protocol = url.getProtocol().toLowerCase(Locale.US);
             if (!"https".equals(protocol) && !"http".equals(protocol)) {
@@ -2555,6 +2756,33 @@ public class MainActivity extends Activity {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    private String extractImageUrlParameter(String rawUrl) {
+        int queryIndex = rawUrl.indexOf('?');
+        if (queryIndex < 0 || queryIndex >= rawUrl.length() - 1) {
+            return null;
+        }
+        String query = rawUrl.substring(queryIndex + 1);
+        String[] pairs = query.split("&");
+        for (String pair : pairs) {
+            int equals = pair.indexOf('=');
+            if (equals <= 0) {
+                continue;
+            }
+            String name = pair.substring(0, equals);
+            if (!"url".equals(name) && !"src".equals(name)) {
+                continue;
+            }
+            try {
+                String value = URLDecoder.decode(pair.substring(equals + 1), "UTF-8");
+                if (value.startsWith("http") && hasImageExtension(value)) {
+                    return value;
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        return null;
     }
 
     private String keyForUrl(String sourceUrl) {
