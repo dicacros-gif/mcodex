@@ -86,6 +86,10 @@ public class MainActivity extends Activity {
     private static final String MAIN_GALLERY_DEFAULT_KEY = "mainGalleryDefaultV3";
     private static final String MAIN_GALLERY_TAB_KEY = "mainGalleryTabV1";
     private static final String KIND_ALL = "all";
+    private static final String LAUNCH_GALLERY = "gallery";
+    private static final String LAUNCH_CRAWL = "crawl";
+    private static final String LAUNCH_EXPLORER = "explorer";
+    private static final String LAUNCH_RECOVER = "recover";
     private static final String[] KINDS = {"styles", "images", "videos"};
     private static final String[] LABELS = {"Styles", "Images", "Videos"};
     private static final int[] DISPLAY_KIND_ORDER = {1, 0, 2};
@@ -192,6 +196,7 @@ public class MainActivity extends Activity {
     private TextView statusText;
     private TextView countText;
     private TextView selectionText;
+    private TextView launchModeText;
     private TextView optionsSummaryText;
     private TextView scrollValueText;
     private TextView maxPerTabValueText;
@@ -222,6 +227,7 @@ public class MainActivity extends Activity {
     private int webStrategyIndex;
     private int webLoadSerial;
     private final int[] queuedByTab = new int[KINDS.length];
+    private final long[] lastFailureCaptureAt = new long[KINDS.length];
     private final Button[] kindTabButtons = new Button[KINDS.length];
     private Button galleryTabButton;
     private Button selectButton;
@@ -242,6 +248,7 @@ public class MainActivity extends Activity {
     private boolean includeImages;
     private boolean includeVideos;
     private String activeKind;
+    private String launchMode;
     private boolean crawling;
     private long externalSessionStartedAt;
     private boolean pendingExternalImport;
@@ -267,11 +274,7 @@ public class MainActivity extends Activity {
         ensureGalleryReadPermission();
         importGalleryFolder();
         renderArchive();
-        if (autoStart) {
-            mainHandler.postDelayed(this::startCrawl, 600);
-        } else {
-            setStatus("Saved gallery is ready. Choose a tab, then use Explorer or Crawl.");
-        }
+        mainHandler.postDelayed(this::runLaunchMode, 700);
     }
 
     @Override
@@ -640,6 +643,43 @@ public class MainActivity extends Activity {
         panel.addView(numberOptionRow("Page wait sec", () -> changePageWait(-500), () -> changePageWait(500), 2));
         panel.addView(numberOptionRow("Scroll pause sec", () -> changeScrollPause(-250), () -> changeScrollPause(250), 3));
 
+        launchModeText = new TextView(this);
+        launchModeText.setTextColor(Color.rgb(210, 216, 225));
+        launchModeText.setTextSize(13f);
+        launchModeText.setTypeface(Typeface.DEFAULT_BOLD);
+        launchModeText.setPadding(0, dp(10), 0, 0);
+        panel.addView(launchModeText);
+
+        LinearLayout launchActions = new LinearLayout(this);
+        launchActions.setOrientation(LinearLayout.HORIZONTAL);
+        launchActions.setGravity(Gravity.CENTER_VERTICAL);
+        launchActions.setPadding(0, dp(6), 0, 0);
+
+        Button launchGalleryButton = smallButton("Launch Gallery");
+        launchGalleryButton.setOnClickListener(v -> setLaunchMode(LAUNCH_GALLERY, false));
+        launchActions.addView(launchGalleryButton);
+
+        Button launchCrawlButton = smallButton("Launch Crawl");
+        launchCrawlButton.setOnClickListener(v -> setLaunchMode(LAUNCH_CRAWL, true));
+        launchActions.addView(launchCrawlButton);
+
+        panel.addView(launchActions);
+
+        LinearLayout launchActions2 = new LinearLayout(this);
+        launchActions2.setOrientation(LinearLayout.HORIZONTAL);
+        launchActions2.setGravity(Gravity.CENTER_VERTICAL);
+        launchActions2.setPadding(0, dp(6), 0, 0);
+
+        Button launchExplorerButton = smallButton("Launch Explorer");
+        launchExplorerButton.setOnClickListener(v -> setLaunchMode(LAUNCH_EXPLORER, true));
+        launchActions2.addView(launchExplorerButton);
+
+        Button launchRecoverButton = smallButton("Launch Recover");
+        launchRecoverButton.setOnClickListener(v -> setLaunchMode(LAUNCH_RECOVER, true));
+        launchActions2.addView(launchRecoverButton);
+
+        panel.addView(launchActions2);
+
         LinearLayout actions = new LinearLayout(this);
         actions.setOrientation(LinearLayout.HORIZONTAL);
         actions.setGravity(Gravity.CENTER_VERTICAL);
@@ -863,6 +903,13 @@ public class MainActivity extends Activity {
 
     private void loadOptions() {
         autoStart = prefs.getBoolean("autoStart", false);
+        launchMode = prefs.getString("launchMode", autoStart ? LAUNCH_CRAWL : LAUNCH_GALLERY);
+        if (!LAUNCH_GALLERY.equals(launchMode)
+                && !LAUNCH_CRAWL.equals(launchMode)
+                && !LAUNCH_EXPLORER.equals(launchMode)
+                && !LAUNCH_RECOVER.equals(launchMode)) {
+            launchMode = LAUNCH_GALLERY;
+        }
         downloadUrls = prefs.getBoolean("downloadUrls", true);
         captureScreens = prefs.getBoolean("captureScreens", true);
         captureOnLoad = prefs.getBoolean("captureOnLoad", true);
@@ -895,6 +942,10 @@ public class MainActivity extends Activity {
         if (!prefs.getBoolean(MAIN_GALLERY_DEFAULT_KEY, false)) {
             autoStart = false;
             editor.putBoolean("autoStart", false);
+            if (launchMode == null || LAUNCH_CRAWL.equals(launchMode)) {
+                launchMode = LAUNCH_GALLERY;
+                editor.putString("launchMode", launchMode);
+            }
             editor.putBoolean(MAIN_GALLERY_DEFAULT_KEY, true);
             changed = true;
         }
@@ -915,6 +966,11 @@ public class MainActivity extends Activity {
             return;
         }
         autoStart = autoStartCheck.isChecked();
+        if (autoStart && LAUNCH_GALLERY.equals(launchMode)) {
+            launchMode = LAUNCH_CRAWL;
+        } else if (!autoStart && (LAUNCH_CRAWL.equals(launchMode) || LAUNCH_RECOVER.equals(launchMode))) {
+            launchMode = LAUNCH_GALLERY;
+        }
         downloadUrls = downloadUrlsCheck.isChecked();
         captureScreens = captureScreensCheck.isChecked();
         captureOnLoad = captureOnLoadCheck.isChecked();
@@ -932,6 +988,7 @@ public class MainActivity extends Activity {
     private void saveOptions() {
         prefs.edit()
                 .putBoolean("autoStart", autoStart)
+                .putString("launchMode", launchMode)
                 .putBoolean("downloadUrls", downloadUrls)
                 .putBoolean("captureScreens", captureScreens)
                 .putBoolean("captureOnLoad", captureOnLoad)
@@ -958,6 +1015,7 @@ public class MainActivity extends Activity {
 
     private void updateOptionsSummary() {
         updateNumberLabels();
+        updateLaunchModeText();
         if (optionsSummaryText == null) {
             return;
         }
@@ -981,6 +1039,7 @@ public class MainActivity extends Activity {
             methods = "none";
         }
         optionsSummaryText.setText("Active tab: " + displayKind(activeKind)
+                + "  |  launch " + displayLaunchMode()
                 + "  |  methods " + methods.trim()
                 + "  |  screen " + (showWebViewWhileCrawling ? "visible" : "hidden")
                 + "  |  scroll " + scrollSteps
@@ -990,6 +1049,25 @@ public class MainActivity extends Activity {
                 + "  |  web " + (publicNoLoginMode ? "public" : "session")
                 + "  |  external " + (externalSessionStartedAt > 0 ? "ready" : "not opened")
                 + "  |  deleted memory " + deletedKeys.size());
+    }
+
+    private void updateLaunchModeText() {
+        if (launchModeText != null) {
+            launchModeText.setText("Launch action: " + displayLaunchMode());
+        }
+    }
+
+    private String displayLaunchMode() {
+        if (LAUNCH_CRAWL.equals(launchMode)) {
+            return "Crawl";
+        }
+        if (LAUNCH_EXPLORER.equals(launchMode)) {
+            return "Explorer";
+        }
+        if (LAUNCH_RECOVER.equals(launchMode)) {
+            return "Recover";
+        }
+        return "Gallery";
     }
 
     private void updateNumberLabels() {
@@ -1029,6 +1107,84 @@ public class MainActivity extends Activity {
         scrollPauseMs = clamp(scrollPauseMs + delta, 500, 5000);
         saveOptions();
         updateOptionsSummary();
+    }
+
+    private void setLaunchMode(String mode, boolean runNow) {
+        if (!LAUNCH_GALLERY.equals(mode)
+                && !LAUNCH_CRAWL.equals(mode)
+                && !LAUNCH_EXPLORER.equals(mode)
+                && !LAUNCH_RECOVER.equals(mode)) {
+            mode = LAUNCH_GALLERY;
+        }
+        launchMode = mode;
+        autoStart = LAUNCH_CRAWL.equals(mode) || LAUNCH_RECOVER.equals(mode);
+        if (autoStartCheck != null) {
+            autoStartCheck.setChecked(autoStart);
+        }
+        if (LAUNCH_RECOVER.equals(mode)) {
+            enableRecoveryOptions();
+        }
+        saveOptions();
+        updateOptionsSummary();
+        setStatus("Launch action set to " + displayLaunchMode() + ".");
+        if (runNow) {
+            mainHandler.postDelayed(this::runLaunchMode, 250);
+        }
+    }
+
+    private void runLaunchMode() {
+        if (LAUNCH_RECOVER.equals(launchMode)) {
+            enableRecoveryOptions();
+            activeKind = KIND_ALL;
+            saveOptions();
+            updateKindTabs();
+            setStatus("Recover launch: reset public WebView, then crawl and capture all tabs.");
+            clearWebSessionData(true, this::startCrawl);
+            return;
+        }
+        if (LAUNCH_CRAWL.equals(launchMode) || autoStart) {
+            activeKind = KIND_ALL;
+            saveOptions();
+            updateKindTabs();
+            startCrawl();
+            return;
+        }
+        if (LAUNCH_EXPLORER.equals(launchMode)) {
+            openExplorerSession();
+            return;
+        }
+        setStatus("Gallery launch is ready. Choose Explorer, Crawl, or set Launch Recover in Options.");
+    }
+
+    private void enableRecoveryOptions() {
+        publicNoLoginMode = true;
+        downloadUrls = true;
+        captureScreens = true;
+        captureOnLoad = true;
+        captureEachScroll = true;
+        showWebViewWhileCrawling = true;
+        pixelCopyCapture = true;
+        drawCapture = true;
+        fullPageCapture = true;
+        stripPageChrome = true;
+        clearCacheBeforeCrawl = true;
+        autoCaptureFallback = true;
+        if (publicNoLoginModeCheck != null) {
+            publicNoLoginModeCheck.setChecked(true);
+        }
+        if (downloadUrlsCheck != null) {
+            downloadUrlsCheck.setChecked(true);
+            captureScreensCheck.setChecked(true);
+            captureOnLoadCheck.setChecked(true);
+            captureEachScrollCheck.setChecked(true);
+            showWebViewWhileCrawlingCheck.setChecked(true);
+            pixelCopyCaptureCheck.setChecked(true);
+            drawCaptureCheck.setChecked(true);
+            fullPageCaptureCheck.setChecked(true);
+            stripPageChromeCheck.setChecked(true);
+            clearCacheBeforeCrawlCheck.setChecked(true);
+            autoCaptureFallbackCheck.setChecked(true);
+        }
     }
 
     private boolean hasEnabledTab() {
@@ -2005,14 +2161,14 @@ public class MainActivity extends Activity {
                 item.localPath = stored.path;
                 item.localUri = stored.uri;
                 item.savedAt = System.currentTimeMillis();
-                mainHandler.post(() -> finishDownload(item, key, null));
+                mainHandler.post(() -> finishDownload(item, key, null, kind));
             } catch (Exception e) {
-                mainHandler.post(() -> finishDownload(null, key, e.getMessage()));
+                mainHandler.post(() -> finishDownload(null, key, e.getMessage(), kind));
             }
         });
     }
 
-    private void finishDownload(ArchiveItem item, String key, String error) {
+    private void finishDownload(ArchiveItem item, String key, String error, String kind) {
         downloadingKeys.remove(key);
         pendingDownloads = Math.max(0, pendingDownloads - 1);
 
@@ -2021,6 +2177,7 @@ public class MainActivity extends Activity {
             if (error != null && error.length() > 0) {
                 setStatus("Skipped one thumbnail: " + error);
             }
+            triggerFailureCapture(indexForKind(kind), "download failed");
             return;
         }
 
@@ -2035,6 +2192,21 @@ public class MainActivity extends Activity {
         saveArchive();
         renderArchive();
         setStatus("Saved " + item.kind + " thumbnail. " + pendingDownloads + " downloads pending.");
+    }
+
+    private void triggerFailureCapture(int kindIndex, String reason) {
+        if (!captureScreens || !autoCaptureFallback || kindIndex < 0 || kindIndex >= KINDS.length) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (now - lastFailureCaptureAt[kindIndex] < 5000L) {
+            return;
+        }
+        lastFailureCaptureAt[kindIndex] = now;
+        if (currentWebKindIndex == kindIndex && webView != null && webView.getWidth() > 0 && webView.getHeight() > 0) {
+            captureVisiblePage(KINDS[kindIndex], LABELS[kindIndex], kindIndex);
+            setStatus(LABELS[kindIndex] + ": " + reason + ", captured visible WebView instead.");
+        }
     }
 
     private StoredImage downloadToStorage(String kind, String sourceUrl, String key) throws IOException {

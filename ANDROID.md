@@ -9,6 +9,9 @@ Behavior:
 - Opens to the saved-image `Gallery` tab first, showing every crawled,
   captured, and imported item together. Crawling starts only when `Crawl` is
   tapped or when the user turns automatic crawl back on.
+- Launch action can be saved in Options: `Gallery`, `Crawl`, `Explorer`, or
+  `Recover`. `Recover` enables every save/capture fallback, resets the public
+  WebView session, then keeps trying all three Explore tabs.
 - Includes an in-app `Options` panel for crawl control.
 - Uses public no-login WebView mode by default, with the system WebView user
   agent and cleared Midjourney cookies/storage before opening Explore.
@@ -73,6 +76,8 @@ Options:
 - Automatically retries public Explore with multiple WebView strategies: system
   WebView, mobile Chrome user agent, desktop Chrome user agent, and a session
   fallback.
+- If a direct thumbnail download fails, the app throttles a visible WebView
+  capture fallback instead of stopping at the failed method.
 - Tune page-load wait and scroll-pause wait times.
 - Start a crawl manually.
 - Save the currently visible Explorer screen.
