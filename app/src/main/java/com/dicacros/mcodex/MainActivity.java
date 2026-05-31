@@ -2,6 +2,7 @@ package com.dicacros.mcodex;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ContentUris;
 import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Intent;
@@ -64,6 +65,7 @@ import java.util.Date;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
+import android.database.Cursor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -203,6 +205,7 @@ public class MainActivity extends Activity {
         prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
         loadOptions();
         loadArchive();
+        importGalleryFolder();
         buildUi();
         configureWebView();
         renderArchive();
@@ -282,9 +285,9 @@ public class MainActivity extends Activity {
         optionsButton.setOnClickListener(v -> toggleOptions());
         toolbar.addView(optionsButton);
 
-        Button sessionButton = smallButton("Session");
-        sessionButton.setOnClickListener(v -> showSession(true));
-        toolbar.addView(sessionButton);
+        Button explorerButton = smallButton("Explorer");
+        explorerButton.setOnClickListener(v -> openExplorerSession());
+        toolbar.addView(explorerButton);
 
         kindTabs = buildKindTabs();
         uiRoot.addView(kindTabs, new LinearLayout.LayoutParams(
@@ -326,7 +329,7 @@ public class MainActivity extends Activity {
         backButton.setOnClickListener(v -> showSession(false));
         sessionBar.addView(backButton);
         TextView sessionText = new TextView(this);
-        sessionText.setText("Midjourney session");
+        sessionText.setText("Midjourney Explorer");
         sessionText.setTextColor(Color.WHITE);
         sessionText.setTextSize(16f);
         sessionText.setTypeface(Typeface.DEFAULT_BOLD);
@@ -436,6 +439,14 @@ public class MainActivity extends Activity {
         cleanButton.setOnClickListener(v -> compactArchive());
         actions.addView(cleanButton);
 
+        Button importButton = smallButton("Import");
+        importButton.setOnClickListener(v -> {
+            int count = importGalleryFolder();
+            renderArchive();
+            setStatus("Imported " + count + " images from Gallery/MJLocalArchive.");
+        });
+        actions.addView(importButton);
+
         Button resetDeletesButton = smallButton("Reset X");
         resetDeletesButton.setOnClickListener(v -> resetDeletedMemory());
         actions.addView(resetDeletesButton);
@@ -473,6 +484,7 @@ public class MainActivity extends Activity {
                 activeKind = KINDS[index];
                 saveOptions();
                 updateKindTabs();
+                importGalleryFolder();
                 renderArchive();
             });
             kindTabButtons[index] = button;
@@ -696,6 +708,15 @@ public class MainActivity extends Activity {
         return includeVideos;
     }
 
+    private int indexForKind(String kind) {
+        for (int i = 0; i < KINDS.length; i++) {
+            if (KINDS[i].equals(kind)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     private int nextEnabledTab(int afterIndex) {
         int next = afterIndex + 1;
         while (next < URLS.length && !isTabEnabled(next)) {
@@ -836,6 +857,19 @@ public class MainActivity extends Activity {
             uiRoot.bringToFront();
             sessionBar.setVisibility(View.GONE);
         }
+    }
+
+    private void openExplorerSession() {
+        syncOptionsFromUi();
+        setOnlyActiveKindEnabled();
+        saveOptions();
+        int index = indexForKind(activeKind);
+        if (index < 0) {
+            index = 1;
+        }
+        showSession(true);
+        setStatus("Opening " + LABELS[index] + " Explorer...");
+        webView.loadUrl(URLS[index]);
     }
 
     private void showCrawlerWebView() {
@@ -1391,7 +1425,7 @@ public class MainActivity extends Activity {
 
         if (visibleCount == 0) {
             TextView empty = new TextView(this);
-            empty.setText("No saved " + activeKind + " yet. Tap Crawl.");
+            empty.setText(displayKind(activeKind) + " saved items are empty. Tap Explorer to open the session, then tap Crawl.");
             empty.setTextColor(Color.rgb(180, 187, 199));
             empty.setTextSize(14f);
             empty.setGravity(Gravity.CENTER);
@@ -1556,6 +1590,104 @@ public class MainActivity extends Activity {
             items.clear();
             itemKeys.clear();
         }
+    }
+
+    private int importGalleryFolder() {
+        int before = items.size();
+        importFromMediaStore();
+        importFromDirectory(galleryFallbackDir);
+        importFromDirectory(photosDir);
+        if (items.size() != before) {
+            saveArchive();
+        }
+        return Math.max(0, items.size() - before);
+    }
+
+    private void importFromMediaStore() {
+        Uri collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
+        String[] projection = {
+                MediaStore.Images.Media._ID,
+                MediaStore.Images.Media.DISPLAY_NAME,
+                MediaStore.Images.Media.DATE_MODIFIED
+        };
+        String selection;
+        String[] selectionArgs;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            selection = MediaStore.Images.Media.RELATIVE_PATH + " LIKE ?";
+            selectionArgs = new String[]{Environment.DIRECTORY_PICTURES + "/MJLocalArchive%"};
+        } else {
+            selection = MediaStore.Images.Media.DATA + " LIKE ?";
+            selectionArgs = new String[]{"%/Pictures/MJLocalArchive/%"};
+        }
+
+        try (Cursor cursor = getContentResolver().query(collection, projection, selection, selectionArgs, MediaStore.Images.Media.DATE_MODIFIED + " DESC")) {
+            if (cursor == null) {
+                return;
+            }
+            int idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID);
+            int nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME);
+            int modifiedColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_MODIFIED);
+            while (cursor.moveToNext()) {
+                long id = cursor.getLong(idColumn);
+                String name = cursor.getString(nameColumn);
+                Uri uri = ContentUris.withAppendedId(collection, id);
+                String kind = kindFromName(name);
+                String key = sha256("mediastore:" + uri);
+                addImportedItem(kind, key, name, "", uri.toString(), cursor.getLong(modifiedColumn) * 1000L);
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void importFromDirectory(File dir) {
+        if (dir == null || !dir.exists() || !dir.isDirectory()) {
+            return;
+        }
+        File[] files = dir.listFiles();
+        if (files == null) {
+            return;
+        }
+        for (File file : files) {
+            if (file == null || !file.isFile() || file.length() == 0 || !hasImageExtension(file.getName())) {
+                continue;
+            }
+            String kind = kindFromName(file.getName());
+            String key = sha256("file:" + file.getAbsolutePath());
+            addImportedItem(kind, key, file.getName(), file.getAbsolutePath(), Uri.fromFile(file).toString(), file.lastModified());
+        }
+    }
+
+    private void addImportedItem(String kind, String key, String name, String path, String uri, long savedAt) {
+        if (key == null || itemKeys.contains(key) || deletedKeys.contains(key)) {
+            return;
+        }
+        ArchiveItem item = new ArchiveItem();
+        item.id = "gallery-" + key.substring(0, Math.min(16, key.length()));
+        item.kind = kind;
+        item.sourceUrl = "gallery-import:" + name;
+        item.key = key;
+        item.localPath = path == null ? "" : path;
+        item.localUri = uri == null ? "" : uri;
+        item.savedAt = savedAt > 0L ? savedAt : System.currentTimeMillis();
+        if (!storedImageExists(item)) {
+            return;
+        }
+        itemKeys.add(item.key);
+        items.add(item);
+    }
+
+    private String kindFromName(String name) {
+        String lower = name == null ? "" : name.toLowerCase(Locale.US);
+        if (lower.startsWith("styles-") || lower.contains("-styles-")) {
+            return "styles";
+        }
+        if (lower.startsWith("videos-") || lower.contains("-videos-")) {
+            return "videos";
+        }
+        if (lower.startsWith("images-") || lower.contains("-images-")) {
+            return "images";
+        }
+        return activeKind != null ? activeKind : "images";
     }
 
     private void saveArchive() {

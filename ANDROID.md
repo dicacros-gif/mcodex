@@ -8,6 +8,11 @@ Behavior:
 - Includes an in-app `Options` panel for crawl control.
 - Shows `Images`, `Styles`, and `Videos` as three visible tappable tabs.
 - Shows saved items under `TOP DAY` date sections, newest date first.
+- The `Explorer` button opens the currently selected Midjourney tab in the
+  visible WebView session.
+- The app scans `Pictures/MJLocalArchive` on launch, on tab change, and through
+  the `Import` option, so gallery files can reappear even if the app archive was
+  empty.
 - Saves WebView screen captures by default, so the app can still keep images
   when the page does not expose downloadable thumbnail URLs.
 - Crawls these tabs through the device WebView session:
@@ -40,6 +45,7 @@ Options:
 - Clear the WebView cache before a crawl when the page appears stale.
 - Tune page-load wait and scroll-pause wait times.
 - Start a crawl manually.
+- Import existing images from the Gallery `MJLocalArchive` album.
 - Clean missing or duplicate archive entries.
 - Reset delete memory so previously deleted sources can be crawled again.
 - Delete all saved thumbnails that the app has recorded.
