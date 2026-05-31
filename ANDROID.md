@@ -7,6 +7,8 @@ Behavior:
 - Opens to the saved-image gallery first. Crawling starts only when `Crawl` is
   tapped or when the user turns automatic crawl back on.
 - Includes an in-app `Options` panel for crawl control.
+- Uses public no-login WebView mode by default, with the system WebView user
+  agent and cleared Midjourney cookies/storage before opening Explore.
 - Shows `Images`, `Styles`, and `Videos` as three visible tappable tabs.
 - Shows saved items under `TOP DAY` date sections, newest date first.
 - The main screen is the saved crawl/capture gallery. Thumbnails are large, tap
@@ -53,6 +55,9 @@ Options:
 - Try full-page draw capture as another fallback.
 - Hide page buttons before capture.
 - Clear the WebView cache before a crawl when the page appears stale.
+- Keep `Public no-login WebView` on for the public Explore feed, or turn it off
+  only when deliberately using a signed-in WebView session.
+- Reset Web clears WebView cookies, local storage, history, SSL state, and cache.
 - Tune page-load wait and scroll-pause wait times.
 - Start a crawl manually.
 - Save the currently visible Explorer screen.
@@ -66,12 +71,13 @@ Options:
 - Delete all saved thumbnails that the app has recorded.
 - Tap an image to open a full-screen preview with pinch zoom and drag.
 
-The app does not include challenge-solving or anti-bot bypass code. If Midjourney,
-Cloudflare, or login blocks the embedded WebView, the app keeps the existing local
-archive unchanged and shows a status message. Use the `Explorer` button to open the
-same WebView session and sign in normally if needed. If the embedded WebView still
-does not render, use `Options > MJ App` or `Options > Browser`, take screenshots or
-save images there, then return to the app and tap `Import Shots`.
+The app does not include challenge-solving or anti-bot bypass code. Public
+no-login mode is the default path for the public Explore feed. If Midjourney or
+Cloudflare still blocks the embedded WebView, the app keeps the existing local
+archive unchanged and shows a status message. Use `Reset Web` first, then
+`Explorer` or `Crawl` again. If the embedded WebView still does not render, use
+`Options > MJ App` or `Options > Browser`, take screenshots or save images there,
+then return to the app and tap `Import Shots`.
 
 ## Build APK
 

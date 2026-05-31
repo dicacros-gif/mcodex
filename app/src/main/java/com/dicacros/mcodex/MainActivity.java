@@ -36,6 +36,7 @@ import android.view.ViewGroup;
 import android.webkit.CookieManager;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
+import android.webkit.WebStorage;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
@@ -191,6 +192,7 @@ public class MainActivity extends Activity {
     private CheckBox fullPageCaptureCheck;
     private CheckBox stripPageChromeCheck;
     private CheckBox clearCacheBeforeCrawlCheck;
+    private CheckBox publicNoLoginModeCheck;
     private String userAgent;
     private int targetIndex;
     private int scrollStep;
@@ -213,6 +215,7 @@ public class MainActivity extends Activity {
     private boolean fullPageCapture;
     private boolean stripPageChrome;
     private boolean clearCacheBeforeCrawl;
+    private boolean publicNoLoginMode;
     private boolean includeStyles;
     private boolean includeImages;
     private boolean includeVideos;
@@ -540,6 +543,7 @@ public class MainActivity extends Activity {
         fullPageCaptureCheck = optionCheck("Capture method: full page draw", fullPageCapture);
         stripPageChromeCheck = optionCheck("Hide page buttons before capture", stripPageChrome);
         clearCacheBeforeCrawlCheck = optionCheck("Clear WebView cache before crawl", clearCacheBeforeCrawl);
+        publicNoLoginModeCheck = optionCheck("Public no-login WebView", publicNoLoginMode);
         checks.addView(autoStartCheck);
         checks.addView(downloadUrlsCheck);
         checks.addView(captureScreensCheck);
@@ -551,6 +555,7 @@ public class MainActivity extends Activity {
         checks.addView(fullPageCaptureCheck);
         checks.addView(stripPageChromeCheck);
         checks.addView(clearCacheBeforeCrawlCheck);
+        checks.addView(publicNoLoginModeCheck);
 
         View.OnClickListener optionChanged = v -> {
             syncOptionsFromUi();
@@ -568,6 +573,7 @@ public class MainActivity extends Activity {
         fullPageCaptureCheck.setOnClickListener(optionChanged);
         stripPageChromeCheck.setOnClickListener(optionChanged);
         clearCacheBeforeCrawlCheck.setOnClickListener(optionChanged);
+        publicNoLoginModeCheck.setOnClickListener(optionChanged);
 
         panel.addView(numberOptionRow("Scroll steps", () -> changeScrollSteps(-1), () -> changeScrollSteps(1), 0));
         panel.addView(numberOptionRow("Max new per tab", () -> changeMaxPerTab(-10), () -> changeMaxPerTab(10), 1));
@@ -595,6 +601,10 @@ public class MainActivity extends Activity {
         Button resetDeletesButton = smallButton("Reset X");
         resetDeletesButton.setOnClickListener(v -> resetDeletedMemory());
         actions.addView(resetDeletesButton);
+
+        Button resetWebButton = smallButton("Reset Web");
+        resetWebButton.setOnClickListener(v -> resetPublicWebSession());
+        actions.addView(resetWebButton);
 
         panel.addView(actions);
 
@@ -779,6 +789,7 @@ public class MainActivity extends Activity {
         fullPageCapture = prefs.getBoolean("fullPageCapture", false);
         stripPageChrome = prefs.getBoolean("stripPageChrome", true);
         clearCacheBeforeCrawl = prefs.getBoolean("clearCacheBeforeCrawl", false);
+        publicNoLoginMode = prefs.getBoolean("publicNoLoginMode", true);
         includeStyles = prefs.getBoolean("includeStyles", true);
         includeImages = prefs.getBoolean("includeImages", true);
         includeVideos = prefs.getBoolean("includeVideos", true);
@@ -819,6 +830,7 @@ public class MainActivity extends Activity {
         fullPageCapture = fullPageCaptureCheck.isChecked();
         stripPageChrome = stripPageChromeCheck.isChecked();
         clearCacheBeforeCrawl = clearCacheBeforeCrawlCheck.isChecked();
+        publicNoLoginMode = publicNoLoginModeCheck.isChecked();
     }
 
     private void saveOptions() {
@@ -834,6 +846,7 @@ public class MainActivity extends Activity {
                 .putBoolean("fullPageCapture", fullPageCapture)
                 .putBoolean("stripPageChrome", stripPageChrome)
                 .putBoolean("clearCacheBeforeCrawl", clearCacheBeforeCrawl)
+                .putBoolean("publicNoLoginMode", publicNoLoginMode)
                 .putBoolean("includeStyles", includeStyles)
                 .putBoolean("includeImages", includeImages)
                 .putBoolean("includeVideos", includeVideos)
@@ -874,6 +887,7 @@ public class MainActivity extends Activity {
                 + "  |  max " + maxPerTab
                 + "  |  wait " + formatSeconds(pageWaitMs)
                 + "/" + formatSeconds(scrollPauseMs)
+                + "  |  web " + (publicNoLoginMode ? "public" : "session")
                 + "  |  external " + (externalSessionStartedAt > 0 ? "ready" : "not opened")
                 + "  |  deleted memory " + deletedKeys.size());
     }
@@ -1159,7 +1173,7 @@ public class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         }
-        userAgent = "Mozilla/5.0 (Linux; Android 14; SM-S928N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36";
+        userAgent = WebSettings.getDefaultUserAgent(this);
         settings.setUserAgentString(userAgent);
 
         CookieManager.getInstance().setAcceptCookie(true);
@@ -1218,7 +1232,62 @@ public class MainActivity extends Activity {
         if (clearCacheBeforeCrawl) {
             webView.clearCache(false);
         }
-        webView.loadUrl(URLS[index]);
+        int finalIndex = index;
+        prepareWebSessionForMidjourney(() -> webView.loadUrl(URLS[finalIndex]));
+    }
+
+    private void resetPublicWebSession() {
+        publicNoLoginMode = true;
+        if (publicNoLoginModeCheck != null) {
+            publicNoLoginModeCheck.setChecked(true);
+        }
+        saveOptions();
+        clearWebSessionData(true, () -> {
+            updateOptionsSummary();
+            setStatus("Reset WebView to public no-login mode. Tap Explorer or Crawl again.");
+        });
+    }
+
+    private void prepareWebSessionForMidjourney(Runnable afterPrepared) {
+        if (!publicNoLoginMode) {
+            afterPrepared.run();
+            return;
+        }
+        clearWebSessionData(false, afterPrepared);
+    }
+
+    private void clearWebSessionData(boolean deepClear, Runnable afterClear) {
+        if (webView != null) {
+            try {
+                webView.stopLoading();
+                webView.clearCache(deepClear);
+                webView.clearHistory();
+                webView.clearFormData();
+                webView.clearSslPreferences();
+            } catch (Exception ignored) {
+            }
+        }
+        try {
+            WebStorage.getInstance().deleteAllData();
+        } catch (Exception ignored) {
+        }
+
+        try {
+            CookieManager manager = CookieManager.getInstance();
+            manager.removeAllCookies(value -> {
+                try {
+                    manager.flush();
+                } catch (Exception ignoredFlush) {
+                }
+                if (afterClear != null) {
+                    mainHandler.post(afterClear);
+                }
+            });
+        } catch (Exception ignored) {
+            if (afterClear != null) {
+                mainHandler.post(afterClear);
+            }
+        }
     }
 
     private void saveVisibleSession() {
@@ -1380,6 +1449,10 @@ public class MainActivity extends Activity {
         if (clearCacheBeforeCrawl) {
             webView.clearCache(false);
         }
+        prepareWebSessionForMidjourney(this::beginCrawl);
+    }
+
+    private void beginCrawl() {
         crawling = true;
         if (captureScreens && showWebViewWhileCrawling) {
             showCrawlerWebView();
@@ -1415,6 +1488,9 @@ public class MainActivity extends Activity {
         }
         setStatus("Opening " + LABELS[targetIndex] + " tab...");
         webView.stopLoading();
+        if (clearCacheBeforeCrawl) {
+            webView.clearCache(false);
+        }
         webView.loadUrl(URLS[targetIndex]);
     }
 
