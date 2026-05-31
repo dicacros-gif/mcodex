@@ -6,11 +6,14 @@ Behavior:
 
 - Starts a Midjourney Explore crawl when the app opens.
 - Includes an in-app `Options` panel for crawl control.
+- Saves WebView screen captures by default, so the app can still keep images
+  when the page does not expose downloadable thumbnail URLs.
 - Crawls these tabs through the device WebView session:
   - `https://www.midjourney.com/explore?tab=styles_top`
   - `https://www.midjourney.com/explore?tab=top`
   - `https://www.midjourney.com/explore?tab=video_top`
-- Stores downloaded image files in the app's private internal storage.
+- Stores downloaded images and WebView captures in one local app folder:
+  `MJLocalArchive`.
 - Stores video-tab results as thumbnail images only.
 - Skips duplicate source URLs.
 - Remembers deleted source keys so deleted items are not re-added on the next crawl.
@@ -22,6 +25,7 @@ Options:
 - Enable or disable styles, images, and video thumbnail tabs independently.
 - Change scroll depth from 1 to 30 steps.
 - Limit newly saved thumbnails per tab from 10 to 300.
+- Turn WebView capture saving on or off.
 - Start a crawl manually.
 - Clean missing or duplicate archive entries.
 - Reset delete memory so previously deleted sources can be crawled again.

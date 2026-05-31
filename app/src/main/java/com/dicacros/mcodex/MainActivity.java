@@ -6,6 +6,7 @@ import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -94,6 +95,21 @@ public class MainActivity extends Activity {
                     + "return {urls:Array.from(urls),title:document.title||'',href:location.href,text:(document.body&&document.body.innerText?document.body.innerText.slice(0,800):'')};"
                     + "})();";
 
+    private static final String CLEAN_PAGE_JS =
+            "(function(){"
+                    + "const hide=function(el){if(el){el.style.setProperty('display','none','important');}};"
+                    + "document.querySelectorAll('nav,header,[role=\"banner\"]').forEach(hide);"
+                    + "document.querySelectorAll('[style]').forEach(function(el){"
+                    + "const s=getComputedStyle(el);"
+                    + "if((s.position==='fixed'||s.position==='sticky')&&(el.offsetHeight<160||el.offsetWidth<240)){hide(el);}"
+                    + "});"
+                    + "document.querySelectorAll('a,button,[role=\"button\"]').forEach(function(el){"
+                    + "const t=(el.innerText||el.textContent||'').trim().toLowerCase();"
+                    + "if(t==='create'||t==='updates'||t==='update'||t==='menu'||t==='크리에이트'||t==='업데이트'){hide(el);}"
+                    + "});"
+                    + "return true;"
+                    + "})();";
+
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService downloadExecutor = Executors.newFixedThreadPool(3);
     private final ArrayList<ArchiveItem> items = new ArrayList<>();
@@ -102,7 +118,8 @@ public class MainActivity extends Activity {
     private final Set<String> downloadingKeys = new HashSet<>();
 
     private File archiveDir;
-    private File mediaDir;
+    private File legacyMediaDir;
+    private File photosDir;
     private File archiveFile;
     private SharedPreferences prefs;
     private WebView webView;
@@ -116,6 +133,7 @@ public class MainActivity extends Activity {
     private TextView scrollValueText;
     private TextView maxPerTabValueText;
     private CheckBox autoStartCheck;
+    private CheckBox captureScreensCheck;
     private CheckBox stylesCheck;
     private CheckBox imagesCheck;
     private CheckBox videosCheck;
@@ -127,6 +145,7 @@ public class MainActivity extends Activity {
     private int maxPerTab;
     private final int[] queuedByTab = new int[KINDS.length];
     private boolean autoStart;
+    private boolean captureScreens;
     private boolean includeStyles;
     private boolean includeImages;
     private boolean includeVideos;
@@ -136,7 +155,9 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         archiveDir = new File(getFilesDir(), "midjourney_archive");
-        mediaDir = new File(archiveDir, "media");
+        legacyMediaDir = new File(archiveDir, "media");
+        File externalRoot = getExternalFilesDir(null);
+        photosDir = new File(externalRoot != null ? externalRoot : archiveDir, "MJLocalArchive");
         archiveFile = new File(archiveDir, "archive.json");
         prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
         loadOptions();
@@ -212,9 +233,9 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT
         ));
 
-        Button refreshButton = smallButton("Refresh");
-        refreshButton.setOnClickListener(v -> startCrawl());
-        toolbar.addView(refreshButton);
+        Button crawlButton = smallButton("Crawl");
+        crawlButton.setOnClickListener(v -> startCrawl());
+        toolbar.addView(crawlButton);
 
         Button optionsButton = smallButton("Options");
         optionsButton.setOnClickListener(v -> toggleOptions());
@@ -287,10 +308,12 @@ public class MainActivity extends Activity {
         panel.addView(checks);
 
         autoStartCheck = optionCheck("Auto crawl on launch", autoStart);
+        captureScreensCheck = optionCheck("Save WebView captures", captureScreens);
         stylesCheck = optionCheck("Crawl styles", includeStyles);
         imagesCheck = optionCheck("Crawl images", includeImages);
         videosCheck = optionCheck("Crawl video thumbnails", includeVideos);
         checks.addView(autoStartCheck);
+        checks.addView(captureScreensCheck);
         checks.addView(stylesCheck);
         checks.addView(imagesCheck);
         checks.addView(videosCheck);
@@ -301,6 +324,7 @@ public class MainActivity extends Activity {
             updateOptionsSummary();
         };
         autoStartCheck.setOnClickListener(optionChanged);
+        captureScreensCheck.setOnClickListener(optionChanged);
         stylesCheck.setOnClickListener(optionChanged);
         imagesCheck.setOnClickListener(optionChanged);
         videosCheck.setOnClickListener(optionChanged);
@@ -312,10 +336,6 @@ public class MainActivity extends Activity {
         actions.setOrientation(LinearLayout.HORIZONTAL);
         actions.setGravity(Gravity.CENTER_VERTICAL);
         actions.setPadding(0, dp(8), 0, 0);
-
-        Button crawlButton = smallButton("Crawl now");
-        crawlButton.setOnClickListener(v -> startCrawl());
-        actions.addView(crawlButton);
 
         Button cleanButton = smallButton("Clean");
         cleanButton.setOnClickListener(v -> compactArchive());
@@ -388,6 +408,7 @@ public class MainActivity extends Activity {
 
     private void loadOptions() {
         autoStart = prefs.getBoolean("autoStart", true);
+        captureScreens = prefs.getBoolean("captureScreens", true);
         includeStyles = prefs.getBoolean("includeStyles", true);
         includeImages = prefs.getBoolean("includeImages", true);
         includeVideos = prefs.getBoolean("includeVideos", true);
@@ -400,6 +421,7 @@ public class MainActivity extends Activity {
             return;
         }
         autoStart = autoStartCheck.isChecked();
+        captureScreens = captureScreensCheck.isChecked();
         includeStyles = stylesCheck.isChecked();
         includeImages = imagesCheck.isChecked();
         includeVideos = videosCheck.isChecked();
@@ -408,6 +430,7 @@ public class MainActivity extends Activity {
     private void saveOptions() {
         prefs.edit()
                 .putBoolean("autoStart", autoStart)
+                .putBoolean("captureScreens", captureScreens)
                 .putBoolean("includeStyles", includeStyles)
                 .putBoolean("includeImages", includeImages)
                 .putBoolean("includeVideos", includeVideos)
@@ -435,6 +458,7 @@ public class MainActivity extends Activity {
             tabs = "none";
         }
         optionsSummaryText.setText("Tabs: " + tabs.trim()
+                + "  |  capture " + (captureScreens ? "on" : "off")
                 + "  |  scroll " + scrollSteps
                 + "  |  max " + maxPerTab
                 + "  |  deleted memory " + deletedKeys.size());
@@ -514,8 +538,9 @@ public class MainActivity extends Activity {
         pendingDownloads = 0;
         items.clear();
         itemKeys.clear();
-        deleteRecursive(mediaDir);
-        mediaDir.mkdirs();
+        deleteRecursive(photosDir);
+        deleteRecursive(legacyMediaDir);
+        photosDir.mkdirs();
         saveArchive();
         renderArchive();
         updateOptionsSummary();
@@ -688,6 +713,11 @@ public class MainActivity extends Activity {
                 String pageText = payload.optString("text", "");
                 int queued = 0;
 
+                if (looksBlocked(pageTitle, pageText)) {
+                    setStatus(label + " is blocked by a challenge page. Open it normally in the WebView session.");
+                    return;
+                }
+
                 if (urls != null) {
                     for (int i = 0; i < urls.length(); i++) {
                         if (queuedByTab[kindIndex] >= maxPerTab) {
@@ -707,15 +737,75 @@ public class MainActivity extends Activity {
                     }
                 }
 
-                if (queued == 0 && looksBlocked(pageTitle, pageText)) {
-                    setStatus(label + " needs a normal WebView session. Tap Session if sign-in is required.");
-                } else if (queued > 0) {
+                if (captureScreens) {
+                    captureVisiblePage(kind, label, kindIndex);
+                }
+
+                if (queued > 0) {
                     setStatus(label + ": queued " + queued + " new thumbnails.");
+                } else if (!captureScreens) {
+                    setStatus(label + ": no downloadable thumbnails found.");
                 }
             } catch (JSONException e) {
                 setStatus("Could not read page data yet.");
             }
         });
+    }
+
+    private void captureVisiblePage(String kind, String label, int kindIndex) {
+        if (queuedByTab[kindIndex] >= maxPerTab || webView.getWidth() <= 0 || webView.getHeight() <= 0) {
+            return;
+        }
+        webView.evaluateJavascript(CLEAN_PAGE_JS, ignored -> {
+            try {
+                int width = webView.getWidth();
+                int height = webView.getHeight();
+                if (width <= 0 || height <= 0) {
+                    return;
+                }
+
+                Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565);
+                Canvas canvas = new Canvas(bitmap);
+                webView.draw(canvas);
+
+                ByteArrayOutputStream output = new ByteArrayOutputStream();
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 88, output);
+                bitmap.recycle();
+                byte[] bytes = output.toByteArray();
+                String key = sha256(bytes);
+                if (itemKeys.contains(key) || deletedKeys.contains(key) || downloadingKeys.contains(key)) {
+                    return;
+                }
+                queuedByTab[kindIndex]++;
+                saveCapturedBytes(kind, label, key, bytes);
+            } catch (Exception ignoredCaptureError) {
+                setStatus(label + ": WebView capture failed.");
+            }
+        });
+    }
+
+    private void saveCapturedBytes(String kind, String label, String key, byte[] bytes) throws IOException {
+        if (!photosDir.exists() && !photosDir.mkdirs()) {
+            throw new IOException("photo folder unavailable");
+        }
+        String id = kind + "-capture-" + key.substring(0, Math.min(16, key.length()));
+        File target = new File(photosDir, id + ".jpg");
+        try (FileOutputStream output = new FileOutputStream(target)) {
+            output.write(bytes);
+        }
+
+        ArchiveItem item = new ArchiveItem();
+        item.id = id;
+        item.kind = kind;
+        item.sourceUrl = "webview-capture:" + kind;
+        item.key = key;
+        item.localPath = target.getAbsolutePath();
+        item.savedAt = System.currentTimeMillis();
+        itemKeys.add(item.key);
+        items.add(item);
+        saveArchive();
+        renderArchive();
+        setStatus(label + ": saved WebView capture.");
     }
 
     private boolean reserveDownloadKey(String key, int kindIndex) {
@@ -779,18 +869,17 @@ public class MainActivity extends Activity {
     }
 
     private File downloadToFile(String kind, String sourceUrl, String key) throws IOException {
-        File kindDir = new File(mediaDir, kind);
-        if (!kindDir.exists() && !kindDir.mkdirs()) {
+        if (!photosDir.exists() && !photosDir.mkdirs()) {
             throw new IOException("storage unavailable");
         }
 
         String ext = extensionForUrl(sourceUrl);
-        File target = new File(kindDir, kind + "-" + key.substring(0, Math.min(24, key.length())) + "." + ext);
+        File target = new File(photosDir, kind + "-" + key.substring(0, Math.min(24, key.length())) + "." + ext);
         if (target.exists() && target.length() > 0) {
             return target;
         }
 
-        File partial = new File(kindDir, target.getName() + ".part");
+        File partial = new File(photosDir, target.getName() + ".part");
         HttpURLConnection connection = (HttpURLConnection) new URL(sourceUrl).openConnection();
         connection.setInstanceFollowRedirects(true);
         connection.setConnectTimeout(15000);
@@ -961,7 +1050,7 @@ public class MainActivity extends Activity {
             }
         }
         countText.setText(items.size() + " saved  |  images " + images + "  styles " + styles + "  videos " + videos
-                + "  |  " + formatBytes(directorySize(mediaDir))
+                + "  |  " + formatBytes(directorySize(photosDir) + directorySize(legacyMediaDir))
                 + "  |  pending " + pendingDownloads);
     }
 
@@ -1054,9 +1143,8 @@ public class MainActivity extends Activity {
         return combined.contains("cloudflare")
                 || combined.contains("just a moment")
                 || combined.contains("attention required")
-                || combined.contains("sign in")
-                || combined.contains("login")
-                || combined.contains("verify you are human");
+                || combined.contains("verify you are human")
+                || combined.contains("checking your browser");
     }
 
     private String cleanSourceUrl(String rawUrl) {
@@ -1122,9 +1210,13 @@ public class MainActivity extends Activity {
     }
 
     private String sha256(String input) {
+        return sha256(input.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    private String sha256(byte[] input) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(input.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            byte[] hash = digest.digest(input);
             StringBuilder out = new StringBuilder(hash.length * 2);
             for (byte b : hash) {
                 out.append(String.format(Locale.US, "%02x", b));
