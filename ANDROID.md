@@ -14,8 +14,8 @@ Behavior:
   - `https://www.midjourney.com/explore?tab=styles_top`
   - `https://www.midjourney.com/explore?tab=top`
   - `https://www.midjourney.com/explore?tab=video_top`
-- Stores downloaded images and WebView captures in one local app folder:
-  `MJLocalArchive`.
+- Stores downloaded images and WebView captures in the Android Gallery album:
+  `Pictures/MJLocalArchive`.
 - Stores video-tab results as thumbnail images only.
 - Skips duplicate source URLs.
 - Remembers deleted source keys so deleted items are not re-added on the next crawl.
@@ -31,13 +31,19 @@ Options:
 - Turn direct image URL downloads on or off.
 - Capture once after a tab loads.
 - Capture again after each scroll step.
+- Show the WebView while crawling so the actual signed-in session is rendered
+  before screen capture.
+- Try PixelCopy screen capture when the WebView is visible.
+- Try WebView draw capture as a fallback.
+- Try full-page draw capture as another fallback.
 - Hide page buttons before capture.
 - Clear the WebView cache before a crawl when the page appears stale.
 - Tune page-load wait and scroll-pause wait times.
 - Start a crawl manually.
 - Clean missing or duplicate archive entries.
 - Reset delete memory so previously deleted sources can be crawled again.
-- Delete all locally saved thumbnails from the app's private storage.
+- Delete all saved thumbnails that the app has recorded.
+- Tap an image to open a full-screen preview with pinch zoom and drag.
 
 The app does not include challenge-solving or anti-bot bypass code. If Midjourney,
 Cloudflare, or login blocks the embedded WebView, the app keeps the existing local

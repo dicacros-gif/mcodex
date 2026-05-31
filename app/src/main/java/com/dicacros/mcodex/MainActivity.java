@@ -2,19 +2,30 @@ package com.dicacros.mcodex;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ContentResolver;
+import android.content.ContentValues;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Picture;
+import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.MediaStore;
 import android.view.Gravity;
+import android.view.MotionEvent;
+import android.view.PixelCopy;
+import android.view.ScaleGestureDetector;
 import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.CookieManager;
@@ -41,6 +52,7 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.security.MessageDigest;
@@ -123,6 +135,7 @@ public class MainActivity extends Activity {
     private File archiveDir;
     private File legacyMediaDir;
     private File photosDir;
+    private File galleryFallbackDir;
     private File archiveFile;
     private SharedPreferences prefs;
     private WebView webView;
@@ -130,6 +143,8 @@ public class MainActivity extends Activity {
     private LinearLayout optionsPanel;
     private LinearLayout sessionBar;
     private LinearLayout kindTabs;
+    private FrameLayout previewOverlay;
+    private ZoomImageView previewImage;
     private GridLayout grid;
     private TextView statusText;
     private TextView countText;
@@ -143,6 +158,10 @@ public class MainActivity extends Activity {
     private CheckBox captureScreensCheck;
     private CheckBox captureOnLoadCheck;
     private CheckBox captureEachScrollCheck;
+    private CheckBox showWebViewWhileCrawlingCheck;
+    private CheckBox pixelCopyCaptureCheck;
+    private CheckBox drawCaptureCheck;
+    private CheckBox fullPageCaptureCheck;
     private CheckBox stripPageChromeCheck;
     private CheckBox clearCacheBeforeCrawlCheck;
     private String userAgent;
@@ -160,6 +179,10 @@ public class MainActivity extends Activity {
     private boolean captureScreens;
     private boolean captureOnLoad;
     private boolean captureEachScroll;
+    private boolean showWebViewWhileCrawling;
+    private boolean pixelCopyCapture;
+    private boolean drawCapture;
+    private boolean fullPageCapture;
     private boolean stripPageChrome;
     private boolean clearCacheBeforeCrawl;
     private boolean includeStyles;
@@ -175,6 +198,7 @@ public class MainActivity extends Activity {
         legacyMediaDir = new File(archiveDir, "media");
         File externalRoot = getExternalFilesDir(null);
         photosDir = new File(externalRoot != null ? externalRoot : archiveDir, "MJLocalArchive");
+        galleryFallbackDir = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "MJLocalArchive");
         archiveFile = new File(archiveDir, "archive.json");
         prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
         loadOptions();
@@ -315,8 +339,36 @@ public class MainActivity extends Activity {
         );
         frame.addView(sessionBar, sessionParams);
 
+        previewOverlay = buildPreviewOverlay();
+        frame.addView(previewOverlay, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+        ));
+
         setContentView(frame);
         setStatus(autoStart ? "Ready. Crawling starts automatically." : "Ready. Auto crawl is off.");
+    }
+
+    private FrameLayout buildPreviewOverlay() {
+        FrameLayout overlay = new FrameLayout(this);
+        overlay.setBackgroundColor(Color.BLACK);
+        overlay.setVisibility(View.GONE);
+
+        previewImage = new ZoomImageView(this);
+        previewImage.setBackgroundColor(Color.BLACK);
+        previewImage.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        overlay.addView(previewImage, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+        ));
+
+        Button close = smallButton("X");
+        close.setTextSize(16f);
+        close.setOnClickListener(v -> hidePreview());
+        FrameLayout.LayoutParams closeParams = new FrameLayout.LayoutParams(dp(52), dp(44), Gravity.TOP | Gravity.RIGHT);
+        closeParams.setMargins(0, dp(14), dp(14), 0);
+        overlay.addView(close, closeParams);
+        return overlay;
     }
 
     private LinearLayout buildOptionsPanel() {
@@ -335,6 +387,10 @@ public class MainActivity extends Activity {
         captureScreensCheck = optionCheck("Method: save WebView captures", captureScreens);
         captureOnLoadCheck = optionCheck("Capture after tab loads", captureOnLoad);
         captureEachScrollCheck = optionCheck("Capture each scroll", captureEachScroll);
+        showWebViewWhileCrawlingCheck = optionCheck("Show WebView while crawling", showWebViewWhileCrawling);
+        pixelCopyCaptureCheck = optionCheck("Capture method: PixelCopy screen", pixelCopyCapture);
+        drawCaptureCheck = optionCheck("Capture method: WebView draw", drawCapture);
+        fullPageCaptureCheck = optionCheck("Capture method: full page draw", fullPageCapture);
         stripPageChromeCheck = optionCheck("Hide page buttons before capture", stripPageChrome);
         clearCacheBeforeCrawlCheck = optionCheck("Clear WebView cache before crawl", clearCacheBeforeCrawl);
         checks.addView(autoStartCheck);
@@ -342,6 +398,10 @@ public class MainActivity extends Activity {
         checks.addView(captureScreensCheck);
         checks.addView(captureOnLoadCheck);
         checks.addView(captureEachScrollCheck);
+        checks.addView(showWebViewWhileCrawlingCheck);
+        checks.addView(pixelCopyCaptureCheck);
+        checks.addView(drawCaptureCheck);
+        checks.addView(fullPageCaptureCheck);
         checks.addView(stripPageChromeCheck);
         checks.addView(clearCacheBeforeCrawlCheck);
 
@@ -355,6 +415,10 @@ public class MainActivity extends Activity {
         captureScreensCheck.setOnClickListener(optionChanged);
         captureOnLoadCheck.setOnClickListener(optionChanged);
         captureEachScrollCheck.setOnClickListener(optionChanged);
+        showWebViewWhileCrawlingCheck.setOnClickListener(optionChanged);
+        pixelCopyCaptureCheck.setOnClickListener(optionChanged);
+        drawCaptureCheck.setOnClickListener(optionChanged);
+        fullPageCaptureCheck.setOnClickListener(optionChanged);
         stripPageChromeCheck.setOnClickListener(optionChanged);
         clearCacheBeforeCrawlCheck.setOnClickListener(optionChanged);
 
@@ -488,6 +552,10 @@ public class MainActivity extends Activity {
         captureScreens = prefs.getBoolean("captureScreens", true);
         captureOnLoad = prefs.getBoolean("captureOnLoad", true);
         captureEachScroll = prefs.getBoolean("captureEachScroll", true);
+        showWebViewWhileCrawling = prefs.getBoolean("showWebViewWhileCrawling", true);
+        pixelCopyCapture = prefs.getBoolean("pixelCopyCapture", true);
+        drawCapture = prefs.getBoolean("drawCapture", true);
+        fullPageCapture = prefs.getBoolean("fullPageCapture", false);
         stripPageChrome = prefs.getBoolean("stripPageChrome", true);
         clearCacheBeforeCrawl = prefs.getBoolean("clearCacheBeforeCrawl", false);
         includeStyles = prefs.getBoolean("includeStyles", true);
@@ -512,6 +580,10 @@ public class MainActivity extends Activity {
         captureScreens = captureScreensCheck.isChecked();
         captureOnLoad = captureOnLoadCheck.isChecked();
         captureEachScroll = captureEachScrollCheck.isChecked();
+        showWebViewWhileCrawling = showWebViewWhileCrawlingCheck.isChecked();
+        pixelCopyCapture = pixelCopyCaptureCheck.isChecked();
+        drawCapture = drawCaptureCheck.isChecked();
+        fullPageCapture = fullPageCaptureCheck.isChecked();
         stripPageChrome = stripPageChromeCheck.isChecked();
         clearCacheBeforeCrawl = clearCacheBeforeCrawlCheck.isChecked();
     }
@@ -523,6 +595,10 @@ public class MainActivity extends Activity {
                 .putBoolean("captureScreens", captureScreens)
                 .putBoolean("captureOnLoad", captureOnLoad)
                 .putBoolean("captureEachScroll", captureEachScroll)
+                .putBoolean("showWebViewWhileCrawling", showWebViewWhileCrawling)
+                .putBoolean("pixelCopyCapture", pixelCopyCapture)
+                .putBoolean("drawCapture", drawCapture)
+                .putBoolean("fullPageCapture", fullPageCapture)
                 .putBoolean("stripPageChrome", stripPageChrome)
                 .putBoolean("clearCacheBeforeCrawl", clearCacheBeforeCrawl)
                 .putBoolean("includeStyles", includeStyles)
@@ -551,11 +627,15 @@ public class MainActivity extends Activity {
         if (captureScreens && captureEachScroll) {
             methods += "scroll-capture ";
         }
+        if (captureScreens && fullPageCapture) {
+            methods += "full-page ";
+        }
         if (methods.length() == 0) {
             methods = "none";
         }
         optionsSummaryText.setText("Active tab: " + displayKind(activeKind)
                 + "  |  methods " + methods.trim()
+                + "  |  screen " + (showWebViewWhileCrawling ? "visible" : "hidden")
                 + "  |  scroll " + scrollSteps
                 + "  |  max " + maxPerTab
                 + "  |  wait " + formatSeconds(pageWaitMs)
@@ -648,7 +728,7 @@ public class MainActivity extends Activity {
         }
         for (ArchiveItem item : new ArrayList<>(items)) {
             deletedKeys.add(item.key);
-            deleteFileQuietly(new File(item.localPath));
+            deleteStoredImage(item);
         }
         deletedKeys.addAll(downloadingKeys);
         downloadingKeys.clear();
@@ -669,9 +749,8 @@ public class MainActivity extends Activity {
         HashSet<String> seen = new HashSet<>();
         ArrayList<ArchiveItem> kept = new ArrayList<>();
         for (ArchiveItem item : items) {
-            File file = new File(item.localPath);
-            if (item.key == null || item.key.length() == 0 || seen.contains(item.key) || !file.exists() || file.length() == 0) {
-                deleteFileQuietly(file);
+            if (item.key == null || item.key.length() == 0 || seen.contains(item.key) || !storedImageExists(item)) {
+                deleteStoredImage(item);
                 removed++;
                 continue;
             }
@@ -759,6 +838,23 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void showCrawlerWebView() {
+        uiRoot.setVisibility(View.GONE);
+        webView.setAlpha(1f);
+        webView.bringToFront();
+        sessionBar.setVisibility(View.GONE);
+    }
+
+    private void showGalleryView() {
+        webView.setAlpha(0.01f);
+        uiRoot.setVisibility(View.VISIBLE);
+        uiRoot.bringToFront();
+        sessionBar.setVisibility(View.GONE);
+        if (previewOverlay != null && previewOverlay.getVisibility() == View.VISIBLE) {
+            previewOverlay.bringToFront();
+        }
+    }
+
     private void toggleOptions() {
         if (optionsPanel == null) {
             return;
@@ -778,6 +874,10 @@ public class MainActivity extends Activity {
             setStatus("Turn on at least one method in Options.");
             return;
         }
+        if (captureScreens && !pixelCopyCapture && !drawCapture && !fullPageCapture) {
+            setStatus("Turn on at least one capture method in Options.");
+            return;
+        }
         if (!hasEnabledTab()) {
             setStatus("Select Images, Styles, or Videos.");
             return;
@@ -786,6 +886,9 @@ public class MainActivity extends Activity {
             webView.clearCache(false);
         }
         crawling = true;
+        if (captureScreens && showWebViewWhileCrawling) {
+            showCrawlerWebView();
+        }
         for (int i = 0; i < queuedByTab.length; i++) {
             queuedByTab[i] = 0;
         }
@@ -810,6 +913,7 @@ public class MainActivity extends Activity {
         if (targetIndex >= URLS.length) {
             crawling = false;
             saveArchive();
+            showGalleryView();
             setStatus("Crawl complete. " + items.size() + " saved, " + pendingDownloads + " downloads still finishing.");
             return;
         }
@@ -896,60 +1000,130 @@ public class MainActivity extends Activity {
             return;
         }
         Runnable capture = () -> {
-            try {
-                int width = webView.getWidth();
-                int height = webView.getHeight();
-                if (width <= 0 || height <= 0) {
+            if (pixelCopyCapture && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && webView.getAlpha() >= 0.9f) {
+                if (requestPixelCopyCapture(kind, label, kindIndex)) {
                     return;
                 }
-
-                Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565);
-                Canvas canvas = new Canvas(bitmap);
-                webView.draw(canvas);
-
-                ByteArrayOutputStream output = new ByteArrayOutputStream();
-                bitmap.compress(Bitmap.CompressFormat.JPEG, 88, output);
-                bitmap.recycle();
-                byte[] bytes = output.toByteArray();
-                String key = sha256(bytes);
-                if (itemKeys.contains(key) || deletedKeys.contains(key) || downloadingKeys.contains(key)) {
-                    return;
-                }
-                queuedByTab[kindIndex]++;
-                saveCapturedBytes(kind, label, key, bytes);
-            } catch (Exception ignoredCaptureError) {
-                setStatus(label + ": WebView capture failed.");
             }
+            fallbackCapture(kind, label, kindIndex);
         };
         if (stripPageChrome) {
-            webView.evaluateJavascript(CLEAN_PAGE_JS, ignored -> capture.run());
+            webView.evaluateJavascript(CLEAN_PAGE_JS, ignored -> mainHandler.postDelayed(capture, 180));
         } else {
             capture.run();
         }
     }
 
-    private void saveCapturedBytes(String kind, String label, String key, byte[] bytes) throws IOException {
-        if (!photosDir.exists() && !photosDir.mkdirs()) {
-            throw new IOException("photo folder unavailable");
+    private boolean requestPixelCopyCapture(String kind, String label, int kindIndex) {
+        try {
+            int[] location = new int[2];
+            webView.getLocationInWindow(location);
+            Rect rect = new Rect(location[0], location[1], location[0] + webView.getWidth(), location[1] + webView.getHeight());
+            Bitmap bitmap = Bitmap.createBitmap(webView.getWidth(), webView.getHeight(), Bitmap.Config.ARGB_8888);
+            PixelCopy.request(getWindow(), rect, bitmap, result -> {
+                if (result == PixelCopy.SUCCESS) {
+                    saveCapturedBitmap(kind, label, kindIndex, bitmap, "pixel");
+                } else {
+                    bitmap.recycle();
+                    fallbackCapture(kind, label, kindIndex);
+                }
+            }, mainHandler);
+            return true;
+        } catch (Exception e) {
+            return false;
         }
-        String id = kind + "-capture-" + key.substring(0, Math.min(16, key.length()));
-        File target = new File(photosDir, id + ".jpg");
-        try (FileOutputStream output = new FileOutputStream(target)) {
-            output.write(bytes);
+    }
+
+    private void fallbackCapture(String kind, String label, int kindIndex) {
+        if (queuedByTab[kindIndex] >= maxPerTab) {
+            return;
         }
+        if (drawCapture) {
+            Bitmap visible = drawVisibleWebViewBitmap();
+            if (visible != null && saveCapturedBitmap(kind, label, kindIndex, visible, "draw")) {
+                return;
+            }
+        }
+        if (fullPageCapture) {
+            Bitmap full = drawFullPageBitmap();
+            if (full != null) {
+                saveCapturedBitmap(kind, label, kindIndex, full, "full");
+            }
+        }
+    }
+
+    private Bitmap drawVisibleWebViewBitmap() {
+        try {
+            int width = webView.getWidth();
+            int height = webView.getHeight();
+            if (width <= 0 || height <= 0) {
+                return null;
+            }
+            Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565);
+            Canvas canvas = new Canvas(bitmap);
+            webView.draw(canvas);
+            return bitmap;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private Bitmap drawFullPageBitmap() {
+        try {
+            Picture picture = webView.capturePicture();
+            if (picture == null || picture.getWidth() <= 0 || picture.getHeight() <= 0) {
+                return null;
+            }
+            int width = Math.min(webView.getWidth() > 0 ? webView.getWidth() : picture.getWidth(), 1440);
+            int height = Math.min(Math.max(webView.getHeight(), picture.getHeight() * width / Math.max(1, picture.getWidth())), 6000);
+            Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565);
+            Canvas canvas = new Canvas(bitmap);
+            canvas.drawColor(Color.WHITE);
+            float scale = width / (float) picture.getWidth();
+            canvas.scale(scale, scale);
+            picture.draw(canvas);
+            return bitmap;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private boolean saveCapturedBitmap(String kind, String label, int kindIndex, Bitmap bitmap, String method) {
+        try {
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 90, output);
+            bitmap.recycle();
+            byte[] bytes = output.toByteArray();
+            String key = sha256(bytes);
+            if (itemKeys.contains(key) || deletedKeys.contains(key) || downloadingKeys.contains(key)) {
+                return false;
+            }
+            queuedByTab[kindIndex]++;
+            saveImageBytes(kind, label, key, bytes, "jpg", "image/jpeg", "webview-" + method);
+            return true;
+        } catch (Exception ignoredCaptureError) {
+            setStatus(label + ": capture failed.");
+            return false;
+        }
+    }
+
+    private void saveImageBytes(String kind, String label, String key, byte[] bytes, String ext, String mimeType, String sourcePrefix) throws IOException {
+        StoredImage stored = saveBytesToGallery(kind, key, bytes, ext, mimeType);
+        String id = kind + "-" + sourcePrefix + "-" + key.substring(0, Math.min(16, key.length()));
 
         ArchiveItem item = new ArchiveItem();
         item.id = id;
         item.kind = kind;
-        item.sourceUrl = "webview-capture:" + kind;
+        item.sourceUrl = sourcePrefix + ":" + kind;
         item.key = key;
-        item.localPath = target.getAbsolutePath();
+        item.localPath = stored.path;
+        item.localUri = stored.uri;
         item.savedAt = System.currentTimeMillis();
         itemKeys.add(item.key);
         items.add(item);
         saveArchive();
         renderArchive();
-        setStatus(label + ": saved WebView capture.");
+        setStatus(label + ": saved to Gallery/MJLocalArchive.");
     }
 
     private boolean reserveDownloadKey(String key, int kindIndex) {
@@ -972,13 +1146,14 @@ public class MainActivity extends Activity {
     private void submitDownload(String kind, String sourceUrl, String key) {
         downloadExecutor.execute(() -> {
             try {
-                File file = downloadToFile(kind, sourceUrl, key);
+                StoredImage stored = downloadToStorage(kind, sourceUrl, key);
                 ArchiveItem item = new ArchiveItem();
                 item.id = kind + "-" + key.substring(0, Math.min(16, key.length()));
                 item.kind = kind;
                 item.sourceUrl = sourceUrl;
                 item.key = key;
-                item.localPath = file.getAbsolutePath();
+                item.localPath = stored.path;
+                item.localUri = stored.uri;
                 item.savedAt = System.currentTimeMillis();
                 mainHandler.post(() -> finishDownload(item, key, null));
             } catch (Exception e) {
@@ -1000,7 +1175,7 @@ public class MainActivity extends Activity {
         }
 
         if (deletedKeys.contains(item.key) || itemKeys.contains(item.key)) {
-            deleteFileQuietly(new File(item.localPath));
+            deleteStoredImage(item);
             updateCounts();
             return;
         }
@@ -1012,18 +1187,8 @@ public class MainActivity extends Activity {
         setStatus("Saved " + item.kind + " thumbnail. " + pendingDownloads + " downloads pending.");
     }
 
-    private File downloadToFile(String kind, String sourceUrl, String key) throws IOException {
-        if (!photosDir.exists() && !photosDir.mkdirs()) {
-            throw new IOException("storage unavailable");
-        }
-
+    private StoredImage downloadToStorage(String kind, String sourceUrl, String key) throws IOException {
         String ext = extensionForUrl(sourceUrl);
-        File target = new File(photosDir, kind + "-" + key.substring(0, Math.min(24, key.length())) + "." + ext);
-        if (target.exists() && target.length() > 0) {
-            return target;
-        }
-
-        File partial = new File(photosDir, target.getName() + ".part");
         HttpURLConnection connection = (HttpURLConnection) new URL(sourceUrl).openConnection();
         connection.setInstanceFollowRedirects(true);
         connection.setConnectTimeout(15000);
@@ -1051,8 +1216,8 @@ public class MainActivity extends Activity {
                 throw new IOException("not an image");
             }
 
-            try (InputStream input = connection.getInputStream();
-                 FileOutputStream output = new FileOutputStream(partial)) {
+            ByteArrayOutputStream output = new ByteArrayOutputStream(length > 0 ? length : 64 * 1024);
+            try (InputStream input = connection.getInputStream()) {
                 byte[] buffer = new byte[32 * 1024];
                 int read;
                 int total = 0;
@@ -1064,27 +1229,63 @@ public class MainActivity extends Activity {
                     output.write(buffer, 0, read);
                 }
             }
-
-            if (target.exists()) {
-                deleteFileQuietly(target);
-            }
-            if (!partial.renameTo(target)) {
-                throw new IOException("could not store file");
-            }
-            return target;
+            return saveBytesToGallery(kind, key, output.toByteArray(), ext, mimeTypeForExt(ext));
         } finally {
             connection.disconnect();
-            if (partial.exists() && !target.exists()) {
-                deleteFileQuietly(partial);
+        }
+    }
+
+    private StoredImage saveBytesToGallery(String kind, String key, byte[] bytes, String ext, String mimeType) throws IOException {
+        String safeExt = ("png".equals(ext) || "webp".equals(ext) || "jpg".equals(ext)) ? ext : "jpg";
+        String fileName = kind + "-" + key.substring(0, Math.min(24, key.length())) + "." + safeExt;
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ContentValues values = new ContentValues();
+            values.put(MediaStore.Images.Media.DISPLAY_NAME, fileName);
+            values.put(MediaStore.Images.Media.MIME_TYPE, mimeType);
+            values.put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/MJLocalArchive");
+            values.put(MediaStore.Images.Media.IS_PENDING, 1);
+
+            ContentResolver resolver = getContentResolver();
+            Uri uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+            if (uri != null) {
+                try (OutputStream output = resolver.openOutputStream(uri)) {
+                    if (output == null) {
+                        throw new IOException("gallery output unavailable");
+                    }
+                    output.write(bytes);
+                } catch (IOException e) {
+                    resolver.delete(uri, null, null);
+                    throw e;
+                }
+
+                values.clear();
+                values.put(MediaStore.Images.Media.IS_PENDING, 0);
+                resolver.update(uri, values, null, null);
+                return new StoredImage("", uri.toString());
             }
         }
+
+        File targetDir = galleryFallbackDir;
+        if (!targetDir.exists() && !targetDir.mkdirs()) {
+            targetDir = photosDir;
+        }
+        if (!targetDir.exists() && !targetDir.mkdirs()) {
+            throw new IOException("gallery folder unavailable");
+        }
+        File target = new File(targetDir, fileName);
+        try (FileOutputStream output = new FileOutputStream(target)) {
+            output.write(bytes);
+        }
+        sendBroadcast(new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, Uri.fromFile(target)));
+        return new StoredImage(target.getAbsolutePath(), Uri.fromFile(target).toString());
     }
 
     private void deleteItem(ArchiveItem item) {
         deletedKeys.add(item.key);
         itemKeys.remove(item.key);
         items.remove(item);
-        deleteFileQuietly(new File(item.localPath));
+        deleteStoredImage(item);
         saveArchive();
         renderArchive();
         setStatus("Deleted one saved thumbnail from device storage.");
@@ -1143,20 +1344,22 @@ public class MainActivity extends Activity {
             card.setOrientation(LinearLayout.VERTICAL);
             card.setBackground(rounded(Color.rgb(26, 30, 38), dp(8)));
             card.setPadding(dp(6), dp(6), dp(6), dp(6));
+            card.setOnClickListener(v -> showPreview(item));
 
             ImageView imageView = new ImageView(this);
             imageView.setScaleType(ImageView.ScaleType.CENTER_CROP);
             imageView.setBackgroundColor(Color.rgb(10, 12, 16));
-            Bitmap bitmap = decodeThumbnail(item.localPath, cardWidth, imageHeight);
+            Bitmap bitmap = decodeThumbnail(item, cardWidth, imageHeight);
             if (bitmap != null) {
                 imageView.setImageBitmap(bitmap);
             } else {
-                imageView.setImageURI(Uri.fromFile(new File(item.localPath)));
+                imageView.setImageURI(uriForItem(item));
             }
             card.addView(imageView, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     imageHeight
             ));
+            imageView.setOnClickListener(v -> showPreview(item));
 
             LinearLayout meta = new LinearLayout(this);
             meta.setOrientation(LinearLayout.HORIZONTAL);
@@ -1204,10 +1407,18 @@ public class MainActivity extends Activity {
         updateCounts();
     }
 
-    private Bitmap decodeThumbnail(String path, int reqWidth, int reqHeight) {
+    private Bitmap decodeThumbnail(ArchiveItem item, int reqWidth, int reqHeight) {
+        Uri uri = uriForItem(item);
+        if (uri == null) {
+            return null;
+        }
         BitmapFactory.Options bounds = new BitmapFactory.Options();
         bounds.inJustDecodeBounds = true;
-        BitmapFactory.decodeFile(path, bounds);
+        try (InputStream input = getContentResolver().openInputStream(uri)) {
+            BitmapFactory.decodeStream(input, null, bounds);
+        } catch (Exception e) {
+            return null;
+        }
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
             return null;
         }
@@ -1220,7 +1431,44 @@ public class MainActivity extends Activity {
         BitmapFactory.Options options = new BitmapFactory.Options();
         options.inSampleSize = sample;
         options.inPreferredConfig = Bitmap.Config.RGB_565;
-        return BitmapFactory.decodeFile(path, options);
+        try (InputStream input = getContentResolver().openInputStream(uri)) {
+            return BitmapFactory.decodeStream(input, null, options);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private Uri uriForItem(ArchiveItem item) {
+        if (item == null) {
+            return null;
+        }
+        if (item.localUri != null && item.localUri.length() > 0) {
+            return Uri.parse(item.localUri);
+        }
+        if (item.localPath != null && item.localPath.length() > 0) {
+            return Uri.fromFile(new File(item.localPath));
+        }
+        return null;
+    }
+
+    private void showPreview(ArchiveItem item) {
+        Uri uri = uriForItem(item);
+        if (uri == null || previewOverlay == null || previewImage == null) {
+            return;
+        }
+        previewImage.resetZoom();
+        previewImage.setImageURI(uri);
+        previewOverlay.setVisibility(View.VISIBLE);
+        previewOverlay.bringToFront();
+    }
+
+    private void hidePreview() {
+        if (previewOverlay != null) {
+            previewOverlay.setVisibility(View.GONE);
+        }
+        if (previewImage != null) {
+            previewImage.setImageDrawable(null);
+        }
     }
 
     private void updateCounts() {
@@ -1238,7 +1486,7 @@ public class MainActivity extends Activity {
         }
         countText.setText(items.size() + " saved  |  images " + images + "  styles " + styles + "  videos " + videos
                 + "  |  tab " + displayKind(activeKind)
-                + "  |  " + formatBytes(directorySize(photosDir) + directorySize(legacyMediaDir))
+                + "  |  " + formatBytes(directorySize(photosDir) + directorySize(galleryFallbackDir) + directorySize(legacyMediaDir))
                 + "  |  pending " + pendingDownloads);
     }
 
@@ -1290,15 +1538,15 @@ public class MainActivity extends Activity {
                 if (item == null || item.key == null || deletedKeys.contains(item.key)) {
                     continue;
                 }
-                File file = new File(item.localPath);
-                if (!file.exists() || file.length() == 0) {
+                if (!storedImageExists(item)) {
                     continue;
                 }
                 if (item.savedAt <= 0L) {
-                    item.savedAt = file.lastModified() > 0L ? file.lastModified() : System.currentTimeMillis();
+                    File file = item.localPath == null || item.localPath.length() == 0 ? null : new File(item.localPath);
+                    item.savedAt = file != null && file.lastModified() > 0L ? file.lastModified() : System.currentTimeMillis();
                 }
                 if (itemKeys.contains(item.key)) {
-                    deleteFileQuietly(file);
+                    deleteStoredImage(item);
                     continue;
                 }
                 itemKeys.add(item.key);
@@ -1413,6 +1661,16 @@ public class MainActivity extends Activity {
                 || lower.contains(".png");
     }
 
+    private String mimeTypeForExt(String ext) {
+        if ("png".equals(ext)) {
+            return "image/png";
+        }
+        if ("webp".equals(ext)) {
+            return "image/webp";
+        }
+        return "image/jpeg";
+    }
+
     private String sha256(String input) {
         return sha256(input.getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
@@ -1452,6 +1710,33 @@ public class MainActivity extends Activity {
     private void deleteFileQuietly(File file) {
         if (file != null && file.exists()) {
             file.delete();
+        }
+    }
+
+    private boolean storedImageExists(ArchiveItem item) {
+        Uri uri = uriForItem(item);
+        if (uri == null) {
+            return false;
+        }
+        try (InputStream input = getContentResolver().openInputStream(uri)) {
+            return input != null;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private void deleteStoredImage(ArchiveItem item) {
+        if (item == null) {
+            return;
+        }
+        if (item.localUri != null && item.localUri.length() > 0) {
+            try {
+                getContentResolver().delete(Uri.parse(item.localUri), null, null);
+            } catch (Exception ignored) {
+            }
+        }
+        if (item.localPath != null && item.localPath.length() > 0) {
+            deleteFileQuietly(new File(item.localPath));
         }
     }
 
@@ -1518,12 +1803,98 @@ public class MainActivity extends Activity {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
+    private static class ZoomImageView extends ImageView {
+        private final ScaleGestureDetector scaleDetector;
+        private float scale = 1f;
+        private float lastX;
+        private float lastY;
+        private boolean dragging;
+
+        ZoomImageView(Activity activity) {
+            super(activity);
+            scaleDetector = new ScaleGestureDetector(activity, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
+                @Override
+                public boolean onScale(ScaleGestureDetector detector) {
+                    scale = Math.max(1f, Math.min(6f, scale * detector.getScaleFactor()));
+                    setScaleX(scale);
+                    setScaleY(scale);
+                    if (scale <= 1.01f) {
+                        setTranslationX(0f);
+                        setTranslationY(0f);
+                    }
+                    return true;
+                }
+            });
+        }
+
+        @Override
+        public boolean onTouchEvent(MotionEvent event) {
+            scaleDetector.onTouchEvent(event);
+            if (event.getPointerCount() > 1) {
+                dragging = false;
+                return true;
+            }
+
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    lastX = event.getX();
+                    lastY = event.getY();
+                    dragging = scale > 1.01f;
+                    return true;
+                case MotionEvent.ACTION_MOVE:
+                    if (dragging) {
+                        float dx = event.getX() - lastX;
+                        float dy = event.getY() - lastY;
+                        setTranslationX(getTranslationX() + dx);
+                        setTranslationY(getTranslationY() + dy);
+                        lastX = event.getX();
+                        lastY = event.getY();
+                        return true;
+                    }
+                    break;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    dragging = false;
+                    performClick();
+                    break;
+                default:
+                    break;
+            }
+            return true;
+        }
+
+        @Override
+        public boolean performClick() {
+            super.performClick();
+            return true;
+        }
+
+        void resetZoom() {
+            scale = 1f;
+            setScaleX(1f);
+            setScaleY(1f);
+            setTranslationX(0f);
+            setTranslationY(0f);
+        }
+    }
+
+    private static class StoredImage {
+        final String path;
+        final String uri;
+
+        StoredImage(String path, String uri) {
+            this.path = path == null ? "" : path;
+            this.uri = uri == null ? "" : uri;
+        }
+    }
+
     private static class ArchiveItem {
         String id;
         String kind;
         String sourceUrl;
         String key;
         String localPath;
+        String localUri;
         long savedAt;
 
         JSONObject toJson() throws JSONException {
@@ -1533,6 +1904,7 @@ public class MainActivity extends Activity {
             obj.put("sourceUrl", sourceUrl);
             obj.put("key", key);
             obj.put("localPath", localPath);
+            obj.put("localUri", localUri);
             obj.put("savedAt", savedAt);
             return obj;
         }
@@ -1544,8 +1916,10 @@ public class MainActivity extends Activity {
             item.sourceUrl = obj.optString("sourceUrl", "");
             item.key = obj.optString("key", "");
             item.localPath = obj.optString("localPath", "");
+            item.localUri = obj.optString("localUri", "");
             item.savedAt = obj.optLong("savedAt", 0L);
-            if (item.id.length() == 0 || item.kind.length() == 0 || item.key.length() == 0 || item.localPath.length() == 0) {
+            if (item.id.length() == 0 || item.kind.length() == 0 || item.key.length() == 0
+                    || ((item.localPath == null || item.localPath.length() == 0) && (item.localUri == null || item.localUri.length() == 0))) {
                 return null;
             }
             return item;
